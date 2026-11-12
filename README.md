@@ -108,6 +108,7 @@ Create a room at the final URL, open the invitation in a second browser/profile,
 
 - Four starting cards; each bottom card can be flipped once for an untimed initial peek. Hide both to finish. Everyone finishes before the first turn.
 - Normal turns draw from the deck, then replace or discard. Only drawn/discarded cards activate optional powers.
+- Click the draw pile to flip your drawn card in place; only you see it. Then click the discard pile to discard it, or click one of your own cards to replace that card. The discard button remains available as an alternative, including when the discard pile starts empty.
 - 7/8 peek at yours; 9/10 peek at another player's; Jack blind-swaps; Queen peeks at yours then optionally swaps; King peeks at yours and another player's then optionally swaps. Any two unlocked cards may be swapped. Peek targets and swap targets are independent.
 - Private power peeks flip the actual card only for the authorized player. Click again to hide. If matching moves that card, its old reveal cannot expose the replacement card.
 - Matching works off-turn, including during a power. A correct match removes the card; matching someone else's requires giving them one of yours. A failed attempt returns the card and adds a penalty, and the player can try again. One successful match consumes that discard opportunity. The first valid server-received attempt wins; latency can affect close races.

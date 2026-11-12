@@ -23,9 +23,9 @@ function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' |
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty }: {
+function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick }: {
   face?: Card | null; onClick?: () => void; disabled?: boolean; selected?: boolean;
-  small?: boolean; index?: number; position?: number; label?: string; highlight?: boolean; empty?: boolean;
+  small?: boolean; index?: number; position?: number; label?: string; highlight?: boolean; empty?: boolean; allowEmptyClick?: boolean;
 }) {
   const [shown, setShown] = useState(face);
   const [flipping, setFlipping] = useState(false);
@@ -41,14 +41,14 @@ function PlayingCard({ face, onClick, disabled, selected, small, index = 0, posi
     return () => { clearTimeout(swap); clearTimeout(finish); };
   }, [face?.rank, face?.suit]);
   const red = shown?.suit === 'hearts' || shown?.suit === 'diamonds';
-  const content = empty ? null : shown ? <>
+  const content = empty ? allowEmptyClick ? <span className="empty-pile-hint">Discard<br/>here</span> : null : shown ? <>
     <span className="card-corner"><b>{rankLabel(shown.rank)}</b><span>{suits[shown.suit]}</span></span>
     <span className={`card-suit ${shown.rank === 0 ? 'joker-mark' : ''}`}>{suits[shown.suit]}</span>
     <span className="card-corner bottom"><b>{rankLabel(shown.rank)}</b><span>{suits[shown.suit]}</span></span>
   </> : <span className="card-back-mark" aria-hidden="true"><i/><i/><i/><i/></span>;
   const className = `playing-card ${shown ? 'face-up' : 'face-down'} ${flipping ? 'is-flipping' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''} ${highlight ? 'highlight' : ''} ${empty ? 'empty-slot' : ''}`;
   const style = { '--card-index': index, ...(position === undefined ? {} : { gridRow: position < 4 ? Math.floor(position / 2) + 1 : (position - 4) % 2 + 1, gridColumn: position < 4 ? position % 2 + 1 : Math.floor((position - 4) / 2) + 3 }) } as CSSProperties;
-  return onClick ? <button type="button" className={className} onClick={onClick} disabled={disabled || empty} aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} aria-pressed={selected || undefined} style={style}>{content}</button>
+  return onClick ? <button type="button" className={className} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} aria-pressed={selected || undefined} style={style}>{content}</button>
     : <div className={className} role="img" aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} style={{ '--card-index': index } as CSSProperties}>{content}</div>;
 }
 
@@ -210,6 +210,11 @@ export default function Home() {
   const countdown = state?.deadline ? Math.max(0, Math.ceil((state.deadline - clock - serverOffset.current) / 1000)) : null;
   const canMatch = !!state && !locked && !state.transfer && state.opportunity?.open && (state.phase === 'playing' || (state.phase === 'ending' && (countdown ?? 0) > 0));
   const transferMine = !!state?.transfer && state.transfer.from === me?.id;
+  const canDiscardDrawn = !!state && isTurn && state.phase === 'playing' && !!state.drawn && !state.transfer && online && !pending;
+  function discardDrawn() {
+    if (!canDiscardDrawn) return;
+    setMatching(false); setSelected(null); send({ type: 'discard' });
+  }
   function selectCard(target: Target) {
     if (!state || !me || pending || !online) return;
     if (state.phase === 'peek' && target.playerId === me.id) { send({ type: 'flip-initial', slot: target.slot }); return; }
@@ -249,7 +254,7 @@ export default function Home() {
       : me.initial === 'viewing' ? { title: 'Remember your cards', detail: 'Click a revealed card again to hide it, or finish looking below.' }
       : { title: 'Waiting for the table', detail: `${state.players.filter(p => p.initial === 'done').length} of ${state.players.length} players have finished looking.` };
     if (!isTurn) return { title: `${active?.name}’s turn`, detail: state.activePower ? `${active?.name} is using a ${rankLabel(state.activePower)} power. You can still match.` : state.hasDrawn ? `${active?.name} is deciding what to do with their card.` : 'Keep an eye on the discard pile. You can match on any turn.' };
-    if (state.drawn) return { title: 'Keep it or discard it', detail: 'Click one of your cards to replace it, or discard the drawn card below.' };
+    if (state.drawn) return { title: 'Keep it or discard it', detail: 'Your draw is face up on the deck. Click one of your cards to replace it, or click the discard pile.' };
     if (state.power) {
       const step = state.power.step;
       return step === 'own' ? { title: 'Peek at one of your cards', detail: 'Choose a card in your hand.' }
@@ -270,7 +275,7 @@ export default function Home() {
     const arcPosition = count <= 1 ? 0 : arcIndex * 2 / (count - 1) - 1;
     const arcWidth = count === 2 ? 30 : count === 3 ? 38 : 42;
     const arcDepth = count <= 2 ? 80 : count <= 5 ? 180 : 210;
-    const arcStyle = own ? undefined : { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${-arcPosition * 18}deg` } as CSSProperties;
+    const arcStyle = own ? undefined : { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${arcPosition * 18}deg` } as CSSProperties;
     return <section key={player.id} style={arcStyle} className={`player-hand ${own ? 'own-hand' : 'opponent-hand'} ${isActive ? 'active-hand' : ''} ${protectedHand ? 'locked-hand' : ''}`} aria-label={`${player.name}${own ? ', your hand' : '’s hand'}${isActive ? ', current turn' : ''}`}>
       <div className="player-heading">
         <span className={`player-avatar avatar-${seatIndex % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
@@ -324,14 +329,33 @@ export default function Home() {
         <div className="table-toolbar"><div className="room-meta"><span className="private-label"><Icon name="lock" size={12}/> Private table</span><button className="room-code-button" onClick={copyInvite}>{formatCode(state.code)}<Icon name={copied ? 'check' : 'copy'} size={13}/></button></div><div className="game-meta"><span>Game {state.gameNumber}</span><span className="meta-dot">·</span><span>{state.phase === 'peek' ? 'Opening look' : state.phase === 'ending' ? 'Final matches' : state.calledBy ? `${state.finalTurns} final ${state.finalTurns === 1 ? 'turn' : 'turns'}` : `Round ${Math.floor(state.turns / state.players.length) + 1}`}</span></div></div>
         <div className={`card-table ${dealing ? 'dealing' : ''} ${state.players.length > 6 ? 'large-room' : ''}`}>
           <div className={`opponents opponents-${Math.min(state.players.length - 1, 5)}`}>{state.players.filter(p => p.id !== me?.id).map((p, i) => hand(p, false, i))}</div>
-          <div className="table-middle"><div className="pile-area"><div className="pile"><div className="deck-stack"><PlayingCard onClick={() => { if (isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer) { setMatching(false); send({ type: 'draw' }); } }} disabled={!isTurn || state.phase !== 'playing' || !!state.drawn || !!state.power || !!state.transfer || !online || pending || !state.deckCount} label={`Draw pile, ${state.deckCount} cards remaining`}/></div><span className="pile-label">Draw pile <b>{state.deckCount}</b></span></div><div className="pile"><PlayingCard face={state.discard} empty={!state.discard} label={state.discard ? `Discard: ${cardLabel(state.discard)}` : 'Discard pile is empty'}/><span className="pile-label">Discard</span></div></div><div className="table-message" aria-live="polite">{state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}<span>{state.message}</span></>}</div></div>
+          <div className="table-middle">
+            <div className="pile-area">
+              <div className="pile">
+                <div className="deck-stack">
+                  <PlayingCard face={online && isTurn ? state.drawn : null}
+                    onClick={() => { if (isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer) { setMatching(false); send({ type: 'draw' }); } }}
+                    disabled={!isTurn || state.phase !== 'playing' || !!state.drawn || !!state.power || !!state.transfer || !online || pending || !state.deckCount}
+                    label={online && isTurn && state.drawn ? `Your drawn card: ${cardLabel(state.drawn)}` : `Draw pile, ${state.deckCount} cards remaining`}/>
+                </div>
+                <span className="pile-label">{isTurn && state.drawn ? 'Your draw' : 'Draw pile'} <b>{state.deckCount}</b></span>
+              </div>
+              <div className="pile">
+                <PlayingCard face={state.discard} empty={!state.discard} allowEmptyClick={canDiscardDrawn}
+                  onClick={discardDrawn} disabled={!canDiscardDrawn} highlight={canDiscardDrawn}
+                  label={canDiscardDrawn ? 'Discard your drawn card here' : state.discard ? `Discard: ${cardLabel(state.discard)}` : 'Discard pile is empty'}/>
+                <span className="pile-label">Discard</span>
+              </div>
+            </div>
+            <div className="table-message" aria-live="polite">{state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}<span>{state.message}</span></>}</div>
+          </div>
           <div className="your-area">{me && hand(me, true, state.players.findIndex(p => p.id === me.id))}</div>
           {dealing && <div className="shuffle-indicator" aria-hidden="true"><Icon name="cards" size={20}/> Shuffling & dealing</div>}
         <section className={`action-bar ${matching && canMatch ? 'matching-mode' : ''}`} aria-label="Game actions"><div className="action-instruction" aria-live="polite"><span className="action-indicator">{transferMine ? <Icon name="arrow"/> : matching && canMatch ? '=' : state.phase === 'ending' ? countdown ?? '·' : isTurn && state.phase === 'playing' ? '→' : <Icon name="cards"/>}</span><div><h2>{instruction.title}</h2><p>{instruction.detail}</p></div></div><div className="action-controls">
           {state.phase === 'peek' && me?.initialCards?.some(s => s === 'waiting') && <button className="button primary" onClick={() => send({ type: 'reveal-initial' })} disabled={pending || !online || dealing}>{me.initial === 'waiting' ? 'Look at bottom two' : 'Look at remaining card'}</button>}
           {state.phase === 'peek' && me?.initial === 'viewing' && <button className="button primary" onClick={() => send({ type: 'close-initial' })} disabled={pending || !online}>Done looking <Icon name="check"/></button>}
           {isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer && <><button className="button secondary cambio-button" title={state.turns < state.players.length * 2 ? 'Available after two complete rounds' : 'Lock your hand and give everyone one last turn'} disabled={pending || !online || !!state.calledBy || state.turns < state.players.length * 2} onClick={() => send({ type: 'cambio' })}>Call Cambio</button><button className="button primary" disabled={pending || !online} onClick={() => { setMatching(false); send({ type: 'draw' }); }}>Draw card <Icon name="arrow"/></button></>}
-          {isTurn && state.drawn && <div className="drawn-choice"><PlayingCard face={state.drawn} small/><button className="button primary" onClick={() => { setMatching(false); send({ type: 'discard' }); }} disabled={pending || !online || !!state.transfer}>Discard{state.drawn.rank >= 7 && state.drawn.rank <= 13 ? ' & choose power' : ''}<Icon name="arrow" size={16}/></button></div>}
+          {isTurn && state.drawn && <div className="drawn-choice"><button className="button primary" onClick={discardDrawn} disabled={!canDiscardDrawn}>Discard{state.drawn.rank >= 7 && state.drawn.rank <= 13 ? ' & choose power' : ''}<Icon name="arrow" size={16}/></button></div>}
           {isTurn && state.power && <><button className="button secondary" disabled={pending || !online || !!state.transfer} onClick={() => { setMatching(false); setSelected(null); send({ type: 'skip-power' }); }}>{state.power.step === 'swap' ? 'Skip swap' : 'Skip power'}</button>{state.power.step === 'view' && <button className="button primary" disabled={pending || !online || !!state.transfer} onClick={() => send({ type: 'close-peek' })}>Done looking <Icon name="check"/></button>}</>}
           {(state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!online || pending || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
         </div></section>

@@ -179,7 +179,7 @@ Use white text on the light-theme accent button (6.45:1); use `#17231D` text on 
 
 Type: system UI font stack for controls and body; 1rem body default (normally 16 CSS px), 0.875rem supporting labels, 1.25rem section titles, and 1.75rem page titles. Cards use large rank glyphs and suit shapes. Use tabular numerals for scores; a separate display/utility font is unnecessary initially. Scale with browser settings rather than fixed screenshot dimensions.
 
-Layout, updated after Safari review: maximize the desktop table by moving controls onto its lower-right area beside your hand, rather than keeping a full-width banner below it. Keep the shared piles central and your hand in a stable two-by-two arrangement below. Arrange opponents in an arc with evenly spaced horizontal positions and gentle inward card-group tilts (up to 18 degrees); names remain upright. Highlight the active section with a subtle light panel and explicit “Your turn” / “Their turn” text. Use Safari for visual review.
+Layout, updated after Safari review: maximize the desktop table by moving controls onto its lower-right area beside your hand, rather than keeping a full-width banner below it. Keep the shared piles central and your hand in a stable two-by-two arrangement below. Arrange opponents in an arc with evenly spaced horizontal positions and gentle card-group tilts (up to 18 degrees), mirrored horizontally from the initial version as requested; names remain upright. Do not use full radial orientation toward the piles. Highlight the active section with a subtle light panel and explicit “Your turn” / “Their turn” text. Use Safari for visual review.
 
 ```text
 Regular width                       Compact width
@@ -204,6 +204,7 @@ Motion: a clean 2D shuffle and deal is explicitly requested. Show a small flat d
 - Native HTML buttons, visible focus, keyboard selection, and touch targets at least 44 × 44 CSS px as our web design target.
 - Clear prompts such as “Peek at one of your cards” and, in a separate phase, “Swap any two cards.”
 - Separate the card being drawn, cards being peeked at, and cards being selected to swap. Never assume a peek target is a swap target.
+- Drawing flips the drawn card privately on the draw pile itself. Click the discard pile (including its empty starting slot) to discard, or click one of your own cards to replace it. Retain the control-panel buttons as alternate paths without displaying a duplicate drawn card there.
 - Initial peek: each bottom card is a one-use click-to-flip/click-to-hide target. “Look at bottom two” and “Done looking” are convenience actions. Viewing is untimed. Once closed, a card's initial peek cannot be reopened; show “Waiting for the table” until all players complete their looks. Keep values private and do not trigger the first turn from animation callbacks.
 - Power peeks flip the target in place for the peeking player only, using a quick 180 ms two-dimensional flip. The face changes at the animation midpoint. Clicking again hides that card; King peeks can be hidden individually while retaining the other peek. A moved card's snapshot must not reveal the replacement card. No separate private-card tray is needed.
 - Prefer tap/click selection with clear selected states. Dragging can be considered later; it should not be required.

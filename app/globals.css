@@ -93,6 +93,7 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 @keyframes flip-card { 0%,100% { transform: scaleX(1); } 48%,52% { transform: scaleX(.025); } }
 .playing-card.empty-slot { background: #ffffff04; box-shadow: none; border: 1px dashed #c0d5c432; }
 .playing-card.empty-slot::before { display: none; }
+.empty-pile-hint { font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #edf4ed; }
 
 .lobby { max-width: 1010px; padding: 64px 32px; margin: 0 auto; display: grid; grid-template-columns: minmax(400px, 1.3fr) 1fr; gap: 100px; }
 .lobby h1 { font-size: 34px; letter-spacing: -1px; line-height: 1.2; margin: 16px 0 10px; font-weight: 650; }

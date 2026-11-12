@@ -177,6 +177,8 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .swap-ghost { position: fixed; margin: 0; z-index: 100; pointer-events: none; transform-origin: center; }
 .playing-card.swap-origin { opacity: .15; }
 .playing-card.swap-recent { box-shadow: 0 0 0 3px #f0d17c, 0 3px 10px #061a1340; }
+.playing-card.being-peeked { box-shadow: 0 0 0 3px #b6ead4, 0 0 16px #b6ead440; }
+.peek-indicator { position: absolute; top: -8px; right: -8px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; background: #b6ead4; color: #172f25; border: 2px solid #214332; pointer-events: none; }
 .action-bar { position: absolute; bottom: 28px; right: 32px; width: min(320px, calc(50% - 130px)); display: flex; flex-direction: column; align-items: stretch; gap: 16px; z-index: 4; color: var(--on-table); }
 .action-instruction { display: flex; align-items: center; }
 .action-indicator { display: none; }

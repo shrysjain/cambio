@@ -29,7 +29,7 @@ The local server defaults to port 8787 automatically in development. To override
 ## Focused verification
 
 ```sh
-npm test             # 12 focused rules/privacy tests; normally under a second
+npm test             # 13 focused rules/privacy tests; normally under a second
 npm run check        # TypeScript for both the frontend and Worker
 npm run build        # Production Next.js build
 ```
@@ -112,7 +112,7 @@ Create a room at the final URL, open the invitation in a second browser/profile,
 - Hand slots keep fixed anchors: removing a card leaves its position empty, and penalty cards append without recentering or rotating the existing layout. Hovering/selecting does not lift a card out of its slot.
 - Every power swap broadcasts the two public positions and animates card backs exchanging places for all connected players. No card values are included in the swap event. With reduced motion, the positions are highlighted instead; game actions do not wait for the animation.
 - 7/8 peek at yours; 9/10 peek at another player's; Jack blind-swaps; Queen peeks at yours then optionally swaps; King peeks at yours and another player's then optionally swaps. Any two unlocked cards may be swapped. Peek targets and swap targets are independent.
-- Private power peeks flip the actual card only for the authorized player. Click again to hide. If matching moves that card, its old reveal cannot expose the replacement card.
+- Initial and power peeks highlight the viewed position with an eye badge for everyone while it is being viewed. Only the authorized player sees the face; click again to hide it. If matching moves that card, its old reveal cannot expose the replacement card.
 - Matching works off-turn, including during a power. A correct match removes the card; matching someone else's requires giving them one of yours. A failed attempt returns the card and adds a penalty, and the player can try again. One successful match consumes that discard opportunity. The first valid server-received attempt wins; latency can affect close races.
 - A = 1, numbered cards score at face value, J = 11, Q = 12, black K = 13, red K = −1, two Jokers = 0. Lowest score wins, ties stay ties, and there is no caller penalty.
 - Cambio becomes available after two complete rounds, on your turn before drawing. The caller's hand is protected from matching/swaps but may be peeked at. Others get one final turn.

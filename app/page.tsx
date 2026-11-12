@@ -11,8 +11,9 @@ const suits = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠', jok
 const same = (a: Target | null, b: Target) => !!a && a.playerId === b.playerId && a.slot === b.slot;
 const formatCode = (code: string) => code.length === 10 ? `${code.slice(0, 5)} ${code.slice(5)}` : code;
 
-function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' | 'close' | 'check' | 'cards' | 'exit'; size?: number }) {
+function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' | 'close' | 'check' | 'cards' | 'exit' | 'eye'; size?: number }) {
   const paths = {
+    eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></>,
     copy: <><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/></>,
     arrow: <><path d="M4 12h15m-6-6 6 6-6 6"/></>,
     users: <><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/></>,
@@ -24,10 +25,11 @@ function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' |
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick, slotKey }: {
+function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick, slotKey, peekedBy }: {
   face?: Card | null; onClick?: () => void; disabled?: boolean; selected?: boolean;
   small?: boolean; index?: number; position?: number; label?: string; highlight?: boolean; empty?: boolean; allowEmptyClick?: boolean;
   slotKey?: string;
+  peekedBy?: string;
 }) {
   const [shown, setShown] = useState(face);
   const [flipping, setFlipping] = useState(false);
@@ -48,9 +50,10 @@ function PlayingCard({ face, onClick, disabled, selected, small, index = 0, posi
     <span className={`card-suit ${shown.rank === 0 ? 'joker-mark' : ''}`}>{suits[shown.suit]}</span>
     <span className="card-corner bottom"><b>{rankLabel(shown.rank)}</b><span>{suits[shown.suit]}</span></span>
   </> : <span className="card-back-mark" aria-hidden="true"><i/><i/><i/><i/></span>;
-  const className = `playing-card ${shown ? 'face-up' : 'face-down'} ${flipping ? 'is-flipping' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''} ${highlight ? 'highlight' : ''} ${empty ? 'empty-slot' : ''}`;
+  const peekMark = peekedBy && !empty ? <span className="peek-indicator" title={`${peekedBy} is looking at this card`} aria-hidden="true"><Icon name="eye" size={13}/></span> : null;
+  const className = `playing-card ${shown ? 'face-up' : 'face-down'} ${flipping ? 'is-flipping' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''} ${highlight ? 'highlight' : ''} ${empty ? 'empty-slot' : ''} ${peekedBy && !empty ? 'being-peeked' : ''}`;
   const style = { '--card-index': index, ...(position === undefined ? {} : { gridRow: position < 4 ? Math.floor(position / 2) + 1 : (position - 4) % 2 + 1, gridColumn: position < 4 ? position % 2 + 1 : Math.floor((position - 4) / 2) + 3 }) } as CSSProperties;
-  return onClick ? <button type="button" className={className} data-card-key={slotKey} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} aria-pressed={selected || undefined} style={style}>{content}</button>
+  return onClick ? <button type="button" className={className} data-card-key={slotKey} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={`${label ?? (face ? cardLabel(face) : 'Face-down card')}${peekedBy ? `, ${peekedBy} is looking at this card` : ''}`} aria-pressed={selected || undefined} style={style}>{content}{peekMark}</button>
     : <div className={className} role="img" aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} style={{ '--card-index': index } as CSSProperties}>{content}</div>;
 }
 
@@ -303,7 +306,8 @@ export default function Home() {
         {player.hand.map((slot, index) => {
           const target = { playerId: player.id, slot: index };
           const face = online || state?.phase === 'finished' ? slot?.face : null;
-          return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} position={index} index={seatIndex * 3 + index} label={!slot ? 'Empty card position' : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
+          const peekedBy = online && slot?.peekedBy ? state?.players.find(p => p.id === slot.peekedBy)?.name : undefined;
+          return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} peekedBy={peekedBy} position={index} index={seatIndex * 3 + index} label={!slot ? 'Empty card position' : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
         })}
         {player.count === 0 && <span className="empty-hand-note">No cards · still in play</span>}
       </div>

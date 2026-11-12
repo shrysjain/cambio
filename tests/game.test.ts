@@ -35,7 +35,9 @@ test('initial peeks are private, untimed, one-use, and gate the first turn', () 
   applyAction(g, 'a', { type: 'reveal-initial' }, 1000);
   assert.equal(viewFor(g, 'a', 999999).players[0].hand.filter(c => c?.face).length, 2);
   assert.equal(viewFor(g, 'b').players[0].hand.filter(c => c?.face).length, 0);
+  assert.deepEqual(viewFor(g, 'b').players[0].hand.map(c => c?.peekedBy), [null, null, 'a', 'a']);
   applyAction(g, 'a', { type: 'close-initial' }, 2000);
+  assert.ok(viewFor(g, 'b').players[0].hand.every(c => !c?.peekedBy));
   assert.equal(g.phase, 'peek');
   assert.throws(() => applyAction(g, 'a', { type: 'reveal-initial' }), /already complete/);
   applyAction(g, 'b', { type: 'flip-initial', slot: 2 });
@@ -47,6 +49,28 @@ test('initial peeks are private, untimed, one-use, and gate the first turn', () 
   applyAction(g, 'c', { type: 'reveal-initial' }); applyAction(g, 'c', { type: 'close-initial' });
   assert.equal(g.phase, 'playing');
   assert.equal(viewFor(g, 'a').players[0].hand.filter(c => c?.face).length, 0);
+});
+
+test('all peek powers publish only the positions and viewer, including both king peeks', () => {
+  for (const rank of [7, 8, 9, 10, 12, 13]) {
+    const g = playing(); discard(g, rank);
+    const targets = rank === 13 ? [{ playerId: 'a', slot: 1 }, { playerId: 'b', slot: 3 }]
+      : [{ playerId: rank === 9 || rank === 10 ? 'b' : 'a', slot: 1 }];
+    for (const target of targets) applyAction(g, 'a', { type: 'peek', target });
+    for (const id of ['a', 'b', 'c']) {
+      const view = viewFor(g, id);
+      for (const target of targets) {
+        const slot = view.players.find(p => p.id === target.playerId)!.hand[target.slot]!;
+        assert.equal(slot.peekedBy, 'a');
+        assert.deepEqual(Object.keys(slot).sort(), ['face', 'peekedBy', 'peeking']);
+        if (id === 'a') assert.ok(slot.face);
+        else { assert.equal(slot.face, null); assert.equal(slot.peeking, false); assert.equal(view.power, null); }
+      }
+      assert.equal(view.players.flatMap(p => p.hand).filter(c => c?.peekedBy).length, targets.length);
+    }
+    for (const target of targets) applyAction(g, 'a', { type: 'hide-peek', target });
+    for (const id of ['a', 'b', 'c']) assert.ok(viewFor(g, id).players.every(p => p.hand.every(c => !c?.peekedBy && !c?.face)));
+  }
 });
 
 test('drawn cards are private and replacement discards never activate a power', () => {

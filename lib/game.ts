@@ -303,7 +303,7 @@ export function cardLabel(card: Card): string {
 }
 
 export function viewFor(game: Game, id: string, now = Date.now()) {
-  const you = playerById(game, id);
+  playerById(game, id);
   const isActive = game.players[game.active]?.id === id;
   const power = isActive ? game.power : null;
   return {
@@ -317,11 +317,14 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
       score: game.phase === 'finished' ? score(p) : null,
       hand: p.hand.map((card, slot) => {
         if (!card) return null;
-        const initial = p.id === id && game.phase === 'peek' && (p.initialCards?.[slot - 2] ?? (slot === 2 || slot === 3 ? you.initial : null)) === 'viewing';
-        const peeking = power?.reveals.some(r => r.target.playerId === p.id && r.target.slot === slot && r.card.rank === card.rank && r.card.suit === card.suit) ?? false;
+        const initial = game.phase === 'peek' && (slot === 2 || slot === 3) && (p.initialCards?.[slot - 2] ?? p.initial) === 'viewing';
+        const powerPeek = game.power?.reveals.some(r => r.target.playerId === p.id && r.target.slot === slot && r.card.rank === card.rank && r.card.suit === card.suit) ?? false;
+        const peeking = isActive && powerPeek;
+        // Publish only who is looking at this position. Card faces stay private.
+        const peekedBy = initial ? p.id : powerPeek ? game.players[game.active].id : null;
         const flash = game.flash && game.flash.until > now && game.flash.target.playerId === p.id && game.flash.target.slot === slot && game.flash.card.rank === card.rank && game.flash.card.suit === card.suit;
         // Power reveals are separate snapshots: target movements cannot silently reveal a new card.
-        return { face: game.phase === 'finished' || initial || flash || peeking ? card : null, peeking };
+        return { face: game.phase === 'finished' || (initial && p.id === id) || flash || peeking ? card : null, peeking, peekedBy };
       }),
     })),
     deckCount: game.deck.length, discard: game.discards.at(-1) ?? null,

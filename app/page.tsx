@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { cardLabel, rankLabel, type Action, type Card, type GameView, type Target } from '@/lib/game';
+import { animateSwap } from '@/lib/swap-animation';
 
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -23,9 +24,10 @@ function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' |
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick }: {
+function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick, slotKey }: {
   face?: Card | null; onClick?: () => void; disabled?: boolean; selected?: boolean;
   small?: boolean; index?: number; position?: number; label?: string; highlight?: boolean; empty?: boolean; allowEmptyClick?: boolean;
+  slotKey?: string;
 }) {
   const [shown, setShown] = useState(face);
   const [flipping, setFlipping] = useState(false);
@@ -48,7 +50,7 @@ function PlayingCard({ face, onClick, disabled, selected, small, index = 0, posi
   </> : <span className="card-back-mark" aria-hidden="true"><i/><i/><i/><i/></span>;
   const className = `playing-card ${shown ? 'face-up' : 'face-down'} ${flipping ? 'is-flipping' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''} ${highlight ? 'highlight' : ''} ${empty ? 'empty-slot' : ''}`;
   const style = { '--card-index': index, ...(position === undefined ? {} : { gridRow: position < 4 ? Math.floor(position / 2) + 1 : (position - 4) % 2 + 1, gridColumn: position < 4 ? position % 2 + 1 : Math.floor((position - 4) / 2) + 3 }) } as CSSProperties;
-  return onClick ? <button type="button" className={className} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} aria-pressed={selected || undefined} style={style}>{content}</button>
+  return onClick ? <button type="button" className={className} data-card-key={slotKey} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} aria-pressed={selected || undefined} style={style}>{content}</button>
     : <div className={className} role="img" aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} style={{ '--card-index': index } as CSSProperties}>{content}</div>;
 }
 
@@ -82,6 +84,8 @@ export default function Home() {
   const serverOffset = useRef(0);
   const knownGame = useRef<string>('');
   const dialog = useRef<HTMLDialogElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const seenSwap = useRef<{ game: string; id: string | null } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -157,6 +161,19 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [error]);
   useEffect(() => { if (rules) dialog.current?.showModal(); else dialog.current?.close(); }, [rules]);
+  useEffect(() => {
+    if (!state) return;
+    const game = `${state.code}:${state.gameNumber}`;
+    const swap = state.lastSwap;
+    if (seenSwap.current?.game !== game) {
+      seenSwap.current = { game, id: swap?.id ?? null };
+      return; // Reconnecting must not replay an old swap.
+    }
+    if (!swap || seenSwap.current.id === swap.id) return;
+    seenSwap.current.id = swap.id;
+    if (!boardRef.current || Date.now() + serverOffset.current - swap.at > 3000) return;
+    return animateSwap(boardRef.current, swap);
+  }, [state?.code, state?.gameNumber, state?.lastSwap?.id]);
 
   const send = useCallback((action: Action, version?: number) => {
     if (socket.current?.readyState !== WebSocket.OPEN || pendingId.current) return;
@@ -286,7 +303,7 @@ export default function Home() {
         {player.hand.map((slot, index) => {
           const target = { playerId: player.id, slot: index };
           const face = online || state?.phase === 'finished' ? slot?.face : null;
-          return <PlayingCard key={index} face={face} empty={!slot} small={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} position={index} index={seatIndex * 3 + index} label={!slot ? 'Empty card position' : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
+          return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} position={index} index={seatIndex * 3 + index} label={!slot ? 'Empty card position' : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
         })}
         {player.count === 0 && <span className="empty-hand-note">No cards · still in play</span>}
       </div>
@@ -327,7 +344,7 @@ export default function Home() {
       </main> : state.phase === 'finished' ? <main className="results"><span className="eyebrow">Game {state.gameNumber} · Final scores</span><h1>{state.winners.length > 1 ? 'A shared victory.' : `${state.players.find(p => p.id === state.winners[0])?.name} takes the table.`}</h1><p className="muted">Lowest score wins. Ready for another?</p><div className="score-table">{[...state.players].sort((a, b) => a.score! - b.score!).map(p => <div className={`score-row ${state.winners.includes(p.id) ? 'winner' : ''}`} key={p.id}><span className="score-name">{p.name}{p.id === me?.id && <small>you</small>}{state.winners.includes(p.id) && <span className="winner-label">{state.winners.length > 1 ? 'Tied winner' : 'Winner'}</span>}</span><div className="score-cards">{p.hand.filter(Boolean).map((c, i) => <PlayingCard key={i} face={c!.face} small/>)}</div><strong className="score-value">{p.score}</strong><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{p.ready ? <><Icon name="check" size={14}/> Ready</> : !state.connectedIds.includes(p.id) ? 'Disconnected' : ''}</span>{me?.id === state.hostId && p.id !== me?.id && !state.connectedIds.includes(p.id) && <button className="text-button" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div><button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online || state.players.length < 2} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> Ready for the next game</> : 'Ready for the next game'}<Icon name="arrow"/></button><p className="lobby-hint">{state.players.filter(p => p.ready).length} of {state.players.length} ready · The next game starts when everyone is ready.</p><button className="text-button" onClick={leave}>Leave table</button></main>
       : <main className="game-layout">
         <div className="table-toolbar"><div className="room-meta"><span className="private-label"><Icon name="lock" size={12}/> Private table</span><button className="room-code-button" onClick={copyInvite}>{formatCode(state.code)}<Icon name={copied ? 'check' : 'copy'} size={13}/></button></div><div className="game-meta"><span>Game {state.gameNumber}</span><span className="meta-dot">·</span><span>{state.phase === 'peek' ? 'Opening look' : state.phase === 'ending' ? 'Final matches' : state.calledBy ? `${state.finalTurns} final ${state.finalTurns === 1 ? 'turn' : 'turns'}` : `Round ${Math.floor(state.turns / state.players.length) + 1}`}</span></div></div>
-        <div className={`card-table ${dealing ? 'dealing' : ''} ${state.players.length > 6 ? 'large-room' : ''}`}>
+        <div ref={boardRef} className={`card-table ${dealing ? 'dealing' : ''} ${state.players.length > 6 ? 'large-room' : ''}`}>
           <div className={`opponents opponents-${Math.min(state.players.length - 1, 5)}`}>{state.players.filter(p => p.id !== me?.id).map((p, i) => hand(p, false, i))}</div>
           <div className="table-middle">
             <div className="pile-area">

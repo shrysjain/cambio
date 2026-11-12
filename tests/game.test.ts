@@ -68,6 +68,40 @@ test('queen can peek at your card then swap two different opponents’ cards', (
   assert.equal(viewFor(g, 'a').power?.reveals.length, 0);
   applyAction(g, 'a', { type: 'swap', a: { playerId: 'b', slot: 0 }, b: { playerId: 'c', slot: 0 } });
   assert.equal(g.players[1].hand[0]?.rank, 8); assert.equal(g.players[2].hand[0]?.rank, 3);
+  const swap = viewFor(g, 'a').lastSwap;
+  assert.ok(swap);
+  assert.deepEqual(swap.a, { playerId: 'b', slot: 0 });
+  assert.deepEqual(swap.b, { playerId: 'c', slot: 0 });
+  assert.deepEqual(Object.keys(swap).sort(), ['a', 'actorId', 'at', 'b', 'id']);
+  for (const id of ['a', 'b', 'c']) {
+    const view = viewFor(g, id);
+    assert.deepEqual(view.lastSwap, swap, 'Everyone receives the same public swap positions.');
+    assert.ok(view.players.every(p => p.hand.every(c => !c?.face)), 'Swapping must not reveal the cards.');
+  }
+});
+
+test('matching leaves a fixed empty slot and penalties append without moving remembered cards', () => {
+  const g = playing();
+  g.players[1].hand = [card(3), card(7), card(5), card(9)];
+  const original = [...g.players[1].hand];
+  discard(g, 7); g.deck = [card(2), card(4), card(6)];
+  const opportunityId = g.opportunity!.id;
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'b', slot: 1 }, opportunityId }, 1000);
+  assert.equal(g.players[1].hand[1], null);
+  // A later discard creates another opportunity; wrong matches add penalties.
+  applyAction(g, 'a', { type: 'skip-power' }, 1100);
+  g.deck = [card(2), card(4), card(8)];
+  applyAction(g, 'b', { type: 'draw' }, 1200);
+  applyAction(g, 'b', { type: 'discard' }, 1201);
+  const nextId = g.opportunity!.id;
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'b', slot: 0 }, opportunityId: nextId }, 1300);
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'b', slot: 0 }, opportunityId: nextId }, 1400);
+  for (const slot of [0, 2, 3]) assert.equal(g.players[1].hand[slot], original[slot]);
+  assert.equal(g.players[1].hand[1], null);
+  assert.equal(g.players[1].hand[4]?.rank, 4);
+  assert.equal(g.players[1].hand[5]?.rank, 2);
+  const view = viewFor(g, 'c', 1500).players[1].hand;
+  assert.equal(view.length, 6); assert.equal(view[1], null);
 });
 
 test('king peeks can be flipped back individually without losing the other peek or leaking faces', () => {

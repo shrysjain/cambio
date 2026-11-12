@@ -136,7 +136,7 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .card-table { position: relative; min-height: 580px; height: calc(100dvh - 156px); background: var(--table); border: 7px solid #d6e0d9; border-radius: 26px; display: flex; flex-direction: column; padding: 20px 32px 15px; box-shadow: inset 0 0 0 1px #ffffff16, 0 4px 15px #183f2910; }
 .card-table::before { content: ''; position: absolute; inset: 9px; border: 1px solid #d5e6d82b; border-radius: 13px; pointer-events: none; }
 .opponents { position: absolute; inset: 26px 35px auto; height: calc(100% - 52px); z-index: 1; pointer-events: none; }
-.player-hand { position: relative; min-width: 0; }
+.player-hand { --hand-card-width: 44px; --hand-card-height: 60px; --hand-gap: 7px; position: relative; min-width: 0; width: calc(var(--hand-card-width) * 2 + var(--hand-gap)); flex-shrink: 0; }
 .opponent-hand { position: absolute; transform: translateX(-50%); pointer-events: auto; }
 .opponent-hand .hand-grid { transform: rotate(var(--hand-tilt, 0deg)); transform-origin: center; }
 .player-heading { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; color: var(--on-table); }
@@ -146,8 +146,9 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .player-identity strong small { font-size: 10px; font-weight: 400; color: var(--table-muted); margin-left: 6px; }
 .player-identity > span { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--table-muted); line-height: 1.7; }
 .turn-dot { width: 6px; height: 6px; border-radius: 50%; background: #efd68a; margin-left: 2px; box-shadow: 0 0 0 3px #efd68a18; }
-.hand-grid { display: grid; grid-template-columns: repeat(2, max-content); grid-auto-columns: max-content; gap: 7px; position: relative; }
-.opponent-hand .playing-card.small { width: 44px; height: 60px; }
+.hand-grid { display: grid; width: calc(var(--hand-card-width) * 2 + var(--hand-gap)); grid-template-columns: repeat(2, var(--hand-card-width)); grid-auto-columns: var(--hand-card-width); grid-auto-rows: var(--hand-card-height); gap: var(--hand-gap); position: relative; }
+.hand-grid button.playing-card:not(:disabled):hover, .hand-grid button.playing-card:active:not(:disabled), .hand-grid .playing-card.selected { transform: none; }
+.opponent-hand .playing-card.small { width: var(--hand-card-width); height: var(--hand-card-height); }
 .opponent-hand .playing-card.small .card-corner b { font-size: 13px; }
 .opponent-hand .playing-card.small .card-suit { font-size: 21px; }
 .opponent-hand .playing-card.small .card-corner span { font-size: 9px; }
@@ -168,12 +169,14 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .table-message { color: #d5e5d9; font-size: 11px; min-height: 24px; padding-top: 6px; display: flex; align-items: center; gap: 10px; justify-content: center; text-align: center; }
 .cambio-badge { display: inline-flex; align-items: center; gap: 4px; color: #f3dfa2; }
 .your-area { position: absolute; bottom: 9px; left: 0; width: 100%; display: flex; justify-content: safe center; padding: 15px 20px 14px; overflow-x: auto; }
-.own-hand { isolation: isolate; }
+.own-hand { --hand-card-width: 66px; --hand-card-height: 90px; --hand-gap: 8px; isolation: isolate; }
 .own-hand .player-heading { justify-content: center; }
-.own-hand .hand-grid { gap: 8px; grid-template-columns: repeat(2, max-content); }
-.own-hand .playing-card { width: 66px; height: 90px; }
+.own-hand .playing-card { width: var(--hand-card-width); height: var(--hand-card-height); }
 .own-hand .player-heading { margin-bottom: 8px; }
 .empty-hand-note { color: #d4e5d9; font-size: 11px; position: absolute; top: 40%; width: 100%; text-align: center; pointer-events: none; }
+.swap-ghost { position: fixed; margin: 0; z-index: 100; pointer-events: none; transform-origin: center; }
+.playing-card.swap-origin { opacity: .15; }
+.playing-card.swap-recent { box-shadow: 0 0 0 3px #f0d17c, 0 3px 10px #061a1340; }
 .action-bar { position: absolute; bottom: 28px; right: 32px; width: min(320px, calc(50% - 130px)); display: flex; flex-direction: column; align-items: stretch; gap: 16px; z-index: 4; color: var(--on-table); }
 .action-instruction { display: flex; align-items: center; }
 .action-indicator { display: none; }
@@ -241,7 +244,7 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 500; line-height: 1; p
 }
 @media (max-height: 800px) and (min-width: 900px) {
   .home { padding-block: 35px; }.art-table { min-height: 420px; }.art-hand { grid-template-columns: repeat(2, 80px); gap: 10px; }.art-hand .playing-card { width: 80px; height: 108px; }
-  .card-table { min-height: 540px; padding-top: 16px; padding-bottom: 12px; }.opponent-hand .playing-card.small { width: 44px; height: 60px; }.own-hand .playing-card { width: 56px; height: 76px; }.table-middle { min-height: 120px; }.pile > .playing-card, .deck-stack > .playing-card { width: 56px; height: 76px; }.player-heading { margin-bottom: 8px; }.your-area { padding-top: 5px; }
+  .card-table { min-height: 540px; padding-top: 16px; padding-bottom: 12px; }.own-hand { --hand-card-width: 56px; --hand-card-height: 76px; }.table-middle { min-height: 120px; }.pile > .playing-card, .deck-stack > .playing-card { width: 56px; height: 76px; }.player-heading { margin-bottom: 8px; }.your-area { padding-top: 5px; }
 }
 @media (max-width: 760px) {
   .site-header { padding: 0 20px; height: 65px; }.header-right { gap: 12px; }.home { display: block; width: min(440px, calc(100% - 40px)); padding: 45px 0; }.home-table-art { display: none; }.home h1 { font-size: 38px; }.join-form { max-width: none; }.privacy-note { font-size: 10px; }

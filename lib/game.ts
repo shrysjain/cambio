@@ -1,6 +1,7 @@
 export type Suit = 'clubs' | 'diamonds' | 'hearts' | 'spades' | 'joker';
 export type Card = { rank: number; suit: Suit };
 export type Target = { playerId: string; slot: number };
+export type SwapEvent = { id: string; actorId: string; a: Target; b: Target; at: number };
 export type Player = {
   id: string; name: string; hand: (Card | null)[]; ready: boolean;
   initial: 'waiting' | 'viewing' | 'done';
@@ -21,6 +22,7 @@ export type Game = {
   deadline: number | null; winners: string[]; gameNumber: number;
   version: number; message: string; updatedAt: number;
   flash: { target: Target; card: Card; until: number } | null;
+  lastSwap?: SwapEvent | null;
 };
 export type Action =
   | { type: 'ready' | 'start' | 'reveal-initial' | 'close-initial' | 'draw' | 'discard' | 'close-peek' | 'skip-power' | 'cambio' | 'end-game' }
@@ -75,7 +77,7 @@ export function newGame(code: string, id: string, name: string, now = Date.now()
     phase: 'lobby', deck: [], discards: [], active: 0, turns: 0, drawn: null,
     power: null, turnComplete: false, opportunity: null, transfer: null,
     calledBy: null, finalTurns: null, exhausted: false, deadline: null,
-    winners: [], gameNumber: 0, version: 0, message: 'Waiting for friends.', updatedAt: now, flash: null,
+    winners: [], gameNumber: 0, version: 0, message: 'Waiting for friends.', updatedAt: now, flash: null, lastSwap: null,
   };
 }
 function begin(game: Game): void {
@@ -91,7 +93,7 @@ function begin(game: Game): void {
   game.drawn = null; game.power = null; game.turnComplete = false;
   game.opportunity = null; game.transfer = null; game.calledBy = null;
   game.finalTurns = null; game.exhausted = false; game.deadline = null;
-  game.winners = []; game.flash = null; game.gameNumber++;
+  game.winners = []; game.flash = null; game.lastSwap = null; game.gameNumber++;
   game.message = 'Look at your bottom two cards. Hide them when you are ready.';
 }
 function publishDiscard(game: Game, card: Card): void {
@@ -275,7 +277,13 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       ensure(action.a.playerId !== action.b.playerId || action.a.slot !== action.b.slot, 'Choose two different cards.');
       const a = targetCard(game, action.a, true), b = targetCard(game, action.b, true);
       a.player.hand[action.a.slot] = b.card; b.player.hand[action.b.slot] = a.card;
-      game.message = `${player.name} swapped two cards.`; finishTurn(game, now);
+      game.lastSwap = {
+        id: crypto.randomUUID(), actorId: id, at: now,
+        a: { playerId: a.player.id, slot: action.a.slot },
+        b: { playerId: b.player.id, slot: action.b.slot },
+      };
+      game.message = `${player.name} swapped ${a.player.name}’s card ${action.a.slot + 1} with ${b.player.name}’s card ${action.b.slot + 1}.`;
+      finishTurn(game, now);
     } else if (action.type === 'cambio') {
       ensure(!game.calledBy && !game.drawn && !game.power, 'Call Cambio before drawing.');
       ensure(game.turns >= game.players.length * 2, 'Two complete rounds must pass before calling Cambio.');
@@ -324,6 +332,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     power: power ? { rank: power.rank, step: power.step, reveals: power.reveals } : null,
     activePower: game.power?.rank ?? null,
     transfer: game.transfer, exhausted: game.exhausted, serverTime: now,
+    lastSwap: game.lastSwap ?? null,
   };
 }
 export type GameView = ReturnType<typeof viewFor> & { connectedIds: string[] };

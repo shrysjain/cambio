@@ -1,0 +1,32 @@
+{
+  "name": "cambio",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "next dev --webpack --hostname 127.0.0.1",
+    "dev:api": "wrangler dev --port 8787",
+    "build": "next build --webpack",
+    "start": "next start --hostname 127.0.0.1",
+    "check": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:network": "node scripts/smoke.mjs",
+    "deploy:api": "wrangler deploy",
+    "login:cloudflare": "wrangler login",
+    "account:cloudflare": "wrangler whoami"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.0.0"
+  }
+}

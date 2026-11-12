@@ -218,7 +218,7 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 500; line-height: 1; p
 .score-name { display: flex; align-items: center; gap: 7px; min-width: 160px; font-size: 14px; font-weight: 600; flex-wrap: wrap; }
 .winner-label { color: var(--accent); border: 1px solid #b7cfbf; background: #e0eee4; padding: 2px 7px; border-radius: 5px; font-size: 9px; font-weight: 550; }
 .score-cards { display: flex; gap: 5px; flex: 1; flex-wrap: wrap; }
-.score-cards .playing-card.small { width: 40px; height: 55px; }.score-cards .card-corner.bottom { display: none; }.score-cards .playing-card.small .card-suit { font-size: 20px; padding-left: 7px; padding-top: 9px; }.score-cards .playing-card.small .card-corner b { font-size: 12px; }
+.score-cards .playing-card.small { width: 40px; height: 55px; }.score-cards .card-corner.bottom { display: none; }.score-cards .playing-card.small .card-suit { font-size: 20px; padding-left: 7px; padding-top: 9px; }.score-cards .playing-card.small:not(:has(.joker-mark)) .card-corner b { font-size: 12px; }
 .score-value { font-size: 23px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
 .score-row .ready-status { width: 78px; }
 .results > .text-button { display: flex; margin: 20px auto 0; }

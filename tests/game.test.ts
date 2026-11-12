@@ -38,7 +38,13 @@ test('initial peeks are private, untimed, one-use, and gate the first turn', () 
   applyAction(g, 'a', { type: 'close-initial' }, 2000);
   assert.equal(g.phase, 'peek');
   assert.throws(() => applyAction(g, 'a', { type: 'reveal-initial' }), /already complete/);
-  for (const id of ['b', 'c']) { applyAction(g, id, { type: 'reveal-initial' }); applyAction(g, id, { type: 'close-initial' }); }
+  applyAction(g, 'b', { type: 'flip-initial', slot: 2 });
+  assert.equal(viewFor(g, 'b').players[1].hand.filter(c => c?.face).length, 1);
+  applyAction(g, 'b', { type: 'flip-initial', slot: 2 });
+  assert.throws(() => applyAction(g, 'b', { type: 'flip-initial', slot: 2 }), /already finished/);
+  applyAction(g, 'b', { type: 'flip-initial', slot: 3 });
+  applyAction(g, 'b', { type: 'flip-initial', slot: 3 });
+  applyAction(g, 'c', { type: 'reveal-initial' }); applyAction(g, 'c', { type: 'close-initial' });
   assert.equal(g.phase, 'playing');
   assert.equal(viewFor(g, 'a').players[0].hand.filter(c => c?.face).length, 0);
 });
@@ -56,10 +62,26 @@ test('queen can peek at your card then swap two different opponents’ cards', (
   discard(g, 12);
   applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 1 } });
   assert.equal(viewFor(g, 'a').power?.reveals.length, 1); assert.equal(viewFor(g, 'b').power, null);
-  applyAction(g, 'a', { type: 'close-peek' });
+  assert.ok(viewFor(g, 'a').players[0].hand[1]?.face);
+  assert.equal(viewFor(g, 'b').players[0].hand[1]?.face, null);
+  applyAction(g, 'a', { type: 'hide-peek', target: { playerId: 'a', slot: 1 } });
   assert.equal(viewFor(g, 'a').power?.reveals.length, 0);
   applyAction(g, 'a', { type: 'swap', a: { playerId: 'b', slot: 0 }, b: { playerId: 'c', slot: 0 } });
   assert.equal(g.players[1].hand[0]?.rank, 8); assert.equal(g.players[2].hand[0]?.rank, 3);
+});
+
+test('king peeks can be flipped back individually without losing the other peek or leaking faces', () => {
+  const g = playing(); discard(g, 13);
+  applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 0 } });
+  applyAction(g, 'a', { type: 'hide-peek', target: { playerId: 'a', slot: 0 } });
+  assert.equal(g.power?.step, 'other');
+  assert.equal(viewFor(g, 'a').players[0].hand[0]?.face, null);
+  applyAction(g, 'a', { type: 'peek', target: { playerId: 'b', slot: 0 } });
+  assert.ok(viewFor(g, 'a').players[1].hand[0]?.face);
+  assert.equal(viewFor(g, 'c').players[1].hand[0]?.face, null);
+  applyAction(g, 'a', { type: 'hide-peek', target: { playerId: 'b', slot: 0 } });
+  assert.equal(g.power?.step, 'swap');
+  assert.equal(viewFor(g, 'a').players[1].hand[0]?.face, null);
 });
 
 test('matching races continue during a power; only one success and zero-card hands stay in play', () => {

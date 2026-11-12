@@ -4,6 +4,7 @@ export type Target = { playerId: string; slot: number };
 export type Player = {
   id: string; name: string; hand: (Card | null)[]; ready: boolean;
   initial: 'waiting' | 'viewing' | 'done';
+  initialCards: ['waiting' | 'viewing' | 'done', 'waiting' | 'viewing' | 'done'];
 };
 export type Power = {
   rank: number; step: 'own' | 'other' | 'view' | 'swap';
@@ -23,7 +24,8 @@ export type Game = {
 };
 export type Action =
   | { type: 'ready' | 'start' | 'reveal-initial' | 'close-initial' | 'draw' | 'discard' | 'close-peek' | 'skip-power' | 'cambio' | 'end-game' }
-  | { type: 'replace' | 'peek'; target: Target }
+  | { type: 'replace' | 'peek' | 'hide-peek'; target: Target }
+  | { type: 'flip-initial'; slot: number }
   | { type: 'swap'; a: Target; b: Target }
   | { type: 'match'; target: Target; opportunityId: string }
   | { type: 'give'; slot: number }
@@ -64,12 +66,12 @@ export function addPlayer(game: Game, id: string, name: string): void {
   ensure(game.phase === 'lobby' || game.phase === 'finished', 'This game has started. Join after it finishes.');
   ensure(game.players.length < 10, 'This room is full (10 players).');
   ensure(!game.players.some(p => p.name.toLowerCase() === name.toLowerCase()), 'That name is already taken in this room.');
-  game.players.push({ id, name, hand: [], ready: false, initial: 'waiting' });
+  game.players.push({ id, name, hand: [], ready: false, initial: 'waiting', initialCards: ['waiting', 'waiting'] });
   game.version++;
 }
 export function newGame(code: string, id: string, name: string, now = Date.now()): Game {
   return {
-    code, hostId: id, players: [{ id, name, hand: [], ready: false, initial: 'waiting' }],
+    code, hostId: id, players: [{ id, name, hand: [], ready: false, initial: 'waiting', initialCards: ['waiting', 'waiting'] }],
     phase: 'lobby', deck: [], discards: [], active: 0, turns: 0, drawn: null,
     power: null, turnComplete: false, opportunity: null, transfer: null,
     calledBy: null, finalTurns: null, exhausted: false, deadline: null,
@@ -82,7 +84,7 @@ function begin(game: Game): void {
   game.active = game.players.findIndex(p => p.id === starter.id);
   game.deck = shuffledDeck();
   for (const p of game.players) {
-    p.hand = []; p.ready = false; p.initial = 'waiting';
+    p.hand = []; p.ready = false; p.initial = 'waiting'; p.initialCards = ['waiting', 'waiting'];
   }
   for (let i = 0; i < 4; i++) for (const p of game.players) p.hand.push(game.deck.pop()!);
   game.phase = 'peek'; game.discards = []; game.turns = 0;
@@ -140,6 +142,12 @@ function targetCard(game: Game, target: Target, mutable: boolean): { player: Pla
   ensure(!game.transfer || game.transfer.to.playerId !== target.playerId || game.transfer.to.slot !== target.slot, 'That card is part of a pending transfer.');
   return { player, card };
 }
+function updateInitial(game: Game, player: Player): void {
+  player.initial = player.initialCards.every(s => s === 'done') ? 'done' : player.initialCards.every(s => s === 'waiting') ? 'waiting' : 'viewing';
+  if (game.players.every(p => p.initial === 'done')) {
+    game.phase = 'playing'; game.message = `${game.players[game.active].name} goes first.`;
+  }
+}
 export function applyAction(game: Game, id: string, action: Action, now = Date.now()): void {
   const player = playerById(game, id);
   ensure(action && typeof action.type === 'string', 'Invalid action.');
@@ -160,14 +168,20 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
     ensure(action.playerId !== id, 'You cannot remove your own seat.');
     game.players = game.players.filter(p => p.id !== action.playerId);
   } else if (action.type === 'reveal-initial') {
-    ensure(game.phase === 'peek' && player.initial === 'waiting', 'Your initial peek is already complete.');
-    player.initial = 'viewing';
+    player.initialCards ??= [player.initial, player.initial];
+    ensure(game.phase === 'peek' && player.initialCards.some(s => s === 'waiting'), 'Your initial peek is already complete.');
+    player.initialCards = player.initialCards.map(s => s === 'waiting' ? 'viewing' : s) as Player['initialCards'];
+    updateInitial(game, player);
+  } else if (action.type === 'flip-initial') {
+    player.initialCards ??= [player.initial, player.initial];
+    ensure(game.phase === 'peek' && (action.slot === 2 || action.slot === 3), 'Only your bottom two cards can be viewed initially.');
+    const i = action.slot - 2;
+    ensure(player.initialCards[i] !== 'done', 'You have already finished looking at that card.');
+    player.initialCards[i] = player.initialCards[i] === 'waiting' ? 'viewing' : 'done';
+    updateInitial(game, player);
   } else if (action.type === 'close-initial') {
     ensure(game.phase === 'peek' && player.initial === 'viewing', 'Reveal your bottom two cards first.');
-    player.initial = 'done';
-    if (game.players.every(p => p.initial === 'done')) {
-      game.phase = 'playing'; game.message = `${game.players[game.active].name} goes first.`;
-    }
+    player.initialCards = ['done', 'done']; updateInitial(game, player);
   } else if (action.type === 'end-game') {
     ensure(id === game.hostId && (game.phase === 'playing' || game.phase === 'peek'), 'Only the host can end a running game.');
     ensure(!game.transfer, 'Finish the pending card transfer first.');
@@ -245,6 +259,14 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       game.power.reveals = [];
       if (rank === 12 || rank === 13) game.power.step = 'swap';
       else finishTurn(game, now);
+    } else if (action.type === 'hide-peek') {
+      const power = game.power;
+      ensure(power && power.reveals.some(r => r.target.playerId === action.target.playerId && r.target.slot === action.target.slot), 'That card is not being peeked at.');
+      power.reveals = power.reveals.filter(r => r.target.playerId !== action.target.playerId || r.target.slot !== action.target.slot);
+      if (power.step === 'view' && power.reveals.length === 0) {
+        if (power.rank === 12 || power.rank === 13) power.step = 'swap';
+        else finishTurn(game, now);
+      }
     } else if (action.type === 'skip-power') {
       ensure(game.power, 'There is no power to skip.');
       finishTurn(game, now);
@@ -282,14 +304,16 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     gameNumber: game.gameNumber, version: game.version,
     players: game.players.map(p => ({
       id: p.id, name: p.name, ready: p.ready, initial: p.initial,
+      initialCards: p.id === id ? p.initialCards ?? [p.initial, p.initial] : null,
       count: p.hand.filter(Boolean).length,
       score: game.phase === 'finished' ? score(p) : null,
       hand: p.hand.map((card, slot) => {
         if (!card) return null;
-        const initial = p.id === id && game.phase === 'peek' && you.initial === 'viewing' && (slot === 2 || slot === 3);
+        const initial = p.id === id && game.phase === 'peek' && (p.initialCards?.[slot - 2] ?? (slot === 2 || slot === 3 ? you.initial : null)) === 'viewing';
+        const peeking = power?.reveals.some(r => r.target.playerId === p.id && r.target.slot === slot && r.card.rank === card.rank && r.card.suit === card.suit) ?? false;
         const flash = game.flash && game.flash.until > now && game.flash.target.playerId === p.id && game.flash.target.slot === slot && game.flash.card.rank === card.rank && game.flash.card.suit === card.suit;
         // Power reveals are separate snapshots: target movements cannot silently reveal a new card.
-        return { face: game.phase === 'finished' || initial || flash ? card : null };
+        return { face: game.phase === 'finished' || initial || flash || peeking ? card : null, peeking };
       }),
     })),
     deckCount: game.deck.length, discard: game.discards.at(-1) ?? null,

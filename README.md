@@ -29,7 +29,7 @@ The local server defaults to port 8787 automatically in development. To override
 ## Focused verification
 
 ```sh
-npm test             # 13 focused rules/privacy tests; normally under a second
+npm test             # 16 focused rules/privacy/layout tests; normally under a second
 npm run check        # TypeScript for both the frontend and Worker
 npm run build        # Production Next.js build
 ```
@@ -111,6 +111,8 @@ Create a room at the final URL, open the invitation in a second browser/profile,
 - Click the draw pile to flip your drawn card in place; only you see it. Then click the discard pile to discard it, or click one of your own cards to replace that card. The discard button remains available as an alternative, including when the discard pile starts empty.
 - Hand slots keep fixed anchors: removing a card leaves its position empty, and penalty cards append without recentering or rotating the existing layout. Hovering/selecting does not lift a card out of its slot.
 - Every power swap broadcasts the two public positions and animates card backs exchanging places for all connected players. No card values are included in the swap event. With reduced motion, the positions are highlighted instead; game actions do not wait for the animation.
+- Draws, discards, replacements, matches, penalties, and card transfers also show public card-back movements and position highlights. Each slot has a small permanent number. Opponents’ layouts face across the table (their bottom two are your top two), and extra cards extend outward without moving existing slots. Turn outlines include penalty columns.
+- New rooms use four-character alphanumeric codes, with automatic collision retries. Existing ten-character invitations and saved seats remain valid.
 - 7/8 peek at yours; 9/10 peek at another player's; Jack blind-swaps; Queen peeks at yours then optionally swaps; King peeks at yours and another player's then optionally swaps. Any two unlocked cards may be swapped. Peek targets and swap targets are independent.
 - Initial and power peeks highlight the viewed position with an eye badge for everyone while it is being viewed. Only the authorized player sees the face; click again to hide it. If matching moves that card, its old reveal cannot expose the replacement card.
 - Matching works off-turn, including during a power. A correct match removes the card; matching someone else's requires giving them one of yours. A failed attempt returns the card and adds a penalty, and the player can try again. One successful match consumes that discard opportunity. The first valid server-received attempt wins; latency can affect close races.

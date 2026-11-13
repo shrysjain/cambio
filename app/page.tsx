@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { cardLabel, rankLabel, type Action, type Card, type GameView, type Target } from '@/lib/game';
-import { animateSwap } from '@/lib/swap-animation';
+import { animateMotion, animateSwap } from '@/lib/swap-animation';
+import { normalizeRoomCode, validRoomCode } from '@/lib/room-code';
+import { handColumns, handPosition } from '@/lib/table-layout';
 
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -25,11 +27,12 @@ function Icon({ name, size = 18 }: { name: 'copy' | 'arrow' | 'users' | 'lock' |
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, label, highlight, empty, allowEmptyClick, slotKey, peekedBy }: {
+function PlayingCard({ face, onClick, disabled, selected, small, index = 0, position, opposite, label, highlight, empty, allowEmptyClick, slotKey, peekedBy }: {
   face?: Card | null; onClick?: () => void; disabled?: boolean; selected?: boolean;
   small?: boolean; index?: number; position?: number; label?: string; highlight?: boolean; empty?: boolean; allowEmptyClick?: boolean;
   slotKey?: string;
   peekedBy?: string;
+  opposite?: boolean;
 }) {
   const [shown, setShown] = useState(face);
   const [flipping, setFlipping] = useState(false);
@@ -52,8 +55,9 @@ function PlayingCard({ face, onClick, disabled, selected, small, index = 0, posi
   </> : <span className="card-back-mark" aria-hidden="true"><i/><i/><i/><i/></span>;
   const peekMark = peekedBy && !empty ? <span className="peek-indicator" title={`${peekedBy} is looking at this card`} aria-hidden="true"><Icon name="eye" size={13}/></span> : null;
   const className = `playing-card ${shown ? 'face-up' : 'face-down'} ${flipping ? 'is-flipping' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''} ${highlight ? 'highlight' : ''} ${empty ? 'empty-slot' : ''} ${peekedBy && !empty ? 'being-peeked' : ''}`;
-  const style = { '--card-index': index, ...(position === undefined ? {} : { gridRow: position < 4 ? Math.floor(position / 2) + 1 : (position - 4) % 2 + 1, gridColumn: position < 4 ? position % 2 + 1 : Math.floor((position - 4) / 2) + 3 }) } as CSSProperties;
-  return onClick ? <button type="button" className={className} data-card-key={slotKey} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={`${label ?? (face ? cardLabel(face) : 'Face-down card')}${peekedBy ? `, ${peekedBy} is looking at this card` : ''}`} aria-pressed={selected || undefined} style={style}>{content}{peekMark}</button>
+  const point = position === undefined ? null : handPosition(position, opposite);
+  const style = { '--card-index': index, ...(point ? { '--slot-row': point.row, '--slot-column': point.column } : {}) } as CSSProperties;
+  return onClick ? <button type="button" className={className} data-card-key={slotKey} onClick={onClick} disabled={disabled || (empty && !allowEmptyClick)} aria-label={`${label ?? (face ? cardLabel(face) : 'Face-down card')}${peekedBy ? `, ${peekedBy} is looking at this card` : ''}`} aria-pressed={selected || undefined} style={style}>{content}{position !== undefined && <span className="slot-number" aria-hidden="true">{position + 1}</span>}{peekMark}</button>
     : <div className={className} role="img" aria-label={label ?? (face ? cardLabel(face) : 'Face-down card')} style={{ '--card-index': index } as CSSProperties}>{content}</div>;
 }
 
@@ -89,10 +93,12 @@ export default function Home() {
   const dialog = useRef<HTMLDialogElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const seenSwap = useRef<{ game: string; id: string | null } | null>(null);
+  const seenMotions = useRef<{ game: string; ids: Set<string> }>({ game: '', ids: new Set() });
+  const motionCleanups = useRef(new Map<string, () => void>());
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const room = (params.get('room') ?? '').replace(/[^a-z2-9]/gi, '').toUpperCase().slice(0, 10);
+    const room = normalizeRoomCode(params.get('room') ?? '');
     setCode(room);
     try {
       setName(localStorage.getItem('cambio:name') ?? '');
@@ -177,6 +183,27 @@ export default function Home() {
     if (!boardRef.current || Date.now() + serverOffset.current - swap.at > 3000) return;
     return animateSwap(boardRef.current, swap);
   }, [state?.code, state?.gameNumber, state?.lastSwap?.id]);
+  useEffect(() => {
+    if (!state) return;
+    const game = `${state.code}:${state.gameNumber}`;
+    const events = state.motions ?? [];
+    const ids = new Set(events.map(e => e.id));
+    for (const [id, cleanup] of motionCleanups.current) if (!ids.has(id) || seenMotions.current.game !== game) {
+      cleanup(); motionCleanups.current.delete(id);
+    }
+    if (seenMotions.current.game !== game) {
+      seenMotions.current = { game, ids };
+      return; // Joining/reconnecting does not replay earlier actions.
+    }
+    for (const event of events) if (!seenMotions.current.ids.has(event.id) && boardRef.current && Date.now() + serverOffset.current - event.at < 3000) {
+      motionCleanups.current.set(event.id, animateMotion(boardRef.current, event));
+    }
+    seenMotions.current.ids = ids;
+  }, [state?.code, state?.gameNumber, state?.motions]);
+  useEffect(() => {
+    const cleanups = motionCleanups.current;
+    return () => { for (const cleanup of cleanups.values()) cleanup(); cleanups.clear(); };
+  }, []);
 
   const send = useCallback((action: Action, version?: number) => {
     if (socket.current?.readyState !== WebSocket.OPEN || pendingId.current) return;
@@ -197,8 +224,8 @@ export default function Home() {
   async function join(create: boolean, event?: FormEvent) {
     event?.preventDefault();
     if (!name.trim()) { setError('Enter your name to take a seat.'); return; }
-    const clean = code.replace(/[^a-z2-9]/gi, '').toUpperCase();
-    if (!create && clean.length !== 10) { setError('Enter the 10-character room code.'); return; }
+    const clean = normalizeRoomCode(code);
+    if (!create && !validRoomCode(clean)) { setError('Enter the 4-character room code.'); return; }
     if (!API) { setError('The game server is unavailable. Please try again later.'); return; }
     setBusy(true); setError('');
     try {
@@ -295,7 +322,8 @@ export default function Home() {
     const arcPosition = count <= 1 ? 0 : arcIndex * 2 / (count - 1) - 1;
     const arcWidth = count === 2 ? 30 : count === 3 ? 38 : 42;
     const arcDepth = count <= 2 ? 80 : count <= 5 ? 180 : 210;
-    const arcStyle = own ? undefined : { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${arcPosition * 18}deg` } as CSSProperties;
+    const columns = handColumns(player.hand.length);
+    const arcStyle = { '--hand-columns': columns, '--hand-first-column': own ? 0 : 2 - columns, ...(!own ? { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${arcPosition * 18}deg` } : {}) } as CSSProperties;
     return <section key={player.id} style={arcStyle} className={`player-hand ${own ? 'own-hand' : 'opponent-hand'} ${isActive ? 'active-hand' : ''} ${protectedHand ? 'locked-hand' : ''}`} aria-label={`${player.name}${own ? ', your hand' : '’s hand'}${isActive ? ', current turn' : ''}`}>
       <div className="player-heading">
         <span className={`player-avatar avatar-${seatIndex % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
@@ -307,7 +335,7 @@ export default function Home() {
           const target = { playerId: player.id, slot: index };
           const face = online || state?.phase === 'finished' ? slot?.face : null;
           const peekedBy = online && slot?.peekedBy ? state?.players.find(p => p.id === slot.peekedBy)?.name : undefined;
-          return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} peekedBy={peekedBy} position={index} index={seatIndex * 3 + index} label={!slot ? 'Empty card position' : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
+          return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} opposite={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} peekedBy={peekedBy} position={index} index={seatIndex * 3 + index} label={!slot ? `Empty card position ${index + 1}` : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
         })}
         {player.count === 0 && <span className="empty-hand-note">No cards · still in play</span>}
       </div>
@@ -330,7 +358,7 @@ export default function Home() {
           <input id="player-name" autoComplete="nickname" maxLength={24} value={name} onChange={e => setName(e.target.value)} placeholder="What should we call you?" disabled={busy}/>
           <button className="button primary create-button" type="button" onClick={() => join(true)} disabled={busy}>{busy ? 'Taking your seat…' : 'Create a private room'}<Icon name="arrow"/></button>
           <div className="form-divider"><span>or join your friends</span></div>
-          <div className="join-row"><input aria-label="Room code" className="code-input" maxLength={12} value={formatCode(code)} onChange={e => setCode(e.target.value.replace(/[^a-z2-9]/gi, '').toUpperCase().slice(0, 10))} placeholder="ROOM CODE" disabled={busy}/><button className="button secondary" type="submit" disabled={busy}>Join room</button></div>
+          <div className="join-row"><input aria-label="Room code" className="code-input" maxLength={12} value={formatCode(code)} onChange={e => setCode(normalizeRoomCode(e.target.value))} placeholder="AB7K" disabled={busy}/><button className="button secondary" type="submit" disabled={busy}>Join room</button></div>
         </form>
         <p className="privacy-note"><Icon name="lock" size={13}/> Private rooms · 2–10 players · No account needed</p>
       </section>
@@ -354,7 +382,7 @@ export default function Home() {
             <div className="pile-area">
               <div className="pile">
                 <div className="deck-stack">
-                  <PlayingCard face={online && isTurn ? state.drawn : null}
+                  <PlayingCard slotKey="draw" face={online && isTurn ? state.drawn : null}
                     onClick={() => { if (isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer) { setMatching(false); send({ type: 'draw' }); } }}
                     disabled={!isTurn || state.phase !== 'playing' || !!state.drawn || !!state.power || !!state.transfer || !online || pending || !state.deckCount}
                     label={online && isTurn && state.drawn ? `Your drawn card: ${cardLabel(state.drawn)}` : `Draw pile, ${state.deckCount} cards remaining`}/>
@@ -362,16 +390,15 @@ export default function Home() {
                 <span className="pile-label">{isTurn && state.drawn ? 'Your draw' : 'Draw pile'} <b>{state.deckCount}</b></span>
               </div>
               <div className="pile">
-                <PlayingCard face={state.discard} empty={!state.discard} allowEmptyClick={canDiscardDrawn}
+                <PlayingCard slotKey="discard" face={state.discard} empty={!state.discard} allowEmptyClick={canDiscardDrawn}
                   onClick={discardDrawn} disabled={!canDiscardDrawn} highlight={canDiscardDrawn}
                   label={canDiscardDrawn ? 'Discard your drawn card here' : state.discard ? `Discard: ${cardLabel(state.discard)}` : 'Discard pile is empty'}/>
                 <span className="pile-label">Discard</span>
               </div>
             </div>
-            <div className="table-message" aria-live="polite">{state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}<span>{state.message}</span></>}</div>
+            <div className="table-message" aria-live="polite">{dealing ? <span className="shuffle-indicator"><Icon name="cards" size={16}/> Shuffling & dealing</span> : state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}<span>{state.message}</span></>}</div>
           </div>
           <div className="your-area">{me && hand(me, true, state.players.findIndex(p => p.id === me.id))}</div>
-          {dealing && <div className="shuffle-indicator" aria-hidden="true"><Icon name="cards" size={20}/> Shuffling & dealing</div>}
         <section className={`action-bar ${matching && canMatch ? 'matching-mode' : ''}`} aria-label="Game actions"><div className="action-instruction" aria-live="polite"><span className="action-indicator">{transferMine ? <Icon name="arrow"/> : matching && canMatch ? '=' : state.phase === 'ending' ? countdown ?? '·' : isTurn && state.phase === 'playing' ? '→' : <Icon name="cards"/>}</span><div><h2>{instruction.title}</h2><p>{instruction.detail}</p></div></div><div className="action-controls">
           {state.phase === 'peek' && me?.initialCards?.some(s => s === 'waiting') && <button className="button primary" onClick={() => send({ type: 'reveal-initial' })} disabled={pending || !online || dealing}>{me.initial === 'waiting' ? 'Look at bottom two' : 'Look at remaining card'}</button>}
           {state.phase === 'peek' && me?.initial === 'viewing' && <button className="button primary" onClick={() => send({ type: 'close-initial' })} disabled={pending || !online}>Done looking <Icon name="check"/></button>}

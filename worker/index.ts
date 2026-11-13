@@ -1,4 +1,5 @@
 import { addPlayer, applyAction, finishIfDue, newGame, viewFor, type Action, type Game } from '../lib/game.ts';
+import { createRoomCode, validRoomCode } from '../lib/room-code.ts';
 
 interface Env { ROOMS: DurableObjectNamespace; ALLOWED_ORIGINS: string }
 type StoredRoom = { game: Game; credentials: Record<string, string>; handled: Record<string, string[]> };
@@ -18,14 +19,12 @@ function nameFrom(data: unknown): string {
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 24 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('Use a name between 1 and 24 characters.');
   return name.trim();
 }
-function roomCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return [...crypto.getRandomValues(new Uint8Array(10))].map(n => chars[n % chars.length]).join('');
-}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const segments = url.pathname.split('/');
+    const roomRoute = segments.length === 4 && segments[1] === 'rooms' && validRoomCode(segments[2]);
     const origin = request.headers.get('Origin');
     const allowed = env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).includes(origin ?? '');
     const cors: Record<string, string> = allowed ? { 'Access-Control-Allow-Origin': origin!, 'Vary': 'Origin', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } : {};
@@ -34,7 +33,7 @@ export default {
     let response: Response;
     try {
       if (url.pathname === '/health') response = json({ ok: true, service: 'cambio' });
-      else if (request.method === 'POST' && (url.pathname === '/rooms' || /^\/rooms\/[A-Z2-9]{10}\/join$/.test(url.pathname))) {
+      else if (request.method === 'POST' && (url.pathname === '/rooms' || (roomRoute && segments[3] === 'join'))) {
         if (Number(request.headers.get('Content-Length') ?? 0) > 2048) return json({ error: 'Request too large.' }, 413);
         const body = await request.text();
         if (body.length > 2048) return json({ error: 'Request too large.' }, 413);
@@ -44,11 +43,16 @@ export default {
         if (!rate.ok) response = json({ error: 'Too many room requests. Try again in a minute.' }, 429);
         else {
           const create = url.pathname === '/rooms';
-          const code = create ? roomCode() : url.pathname.split('/')[2];
-          const room = env.ROOMS.get(env.ROOMS.idFromName(`room:${code}`));
-          response = await room.fetch(`https://internal/${create ? 'create' : 'join'}?code=${code}`, { method: 'POST', body });
+          // A code collision is retried without ever joining or overwriting that room.
+          for (let attempt = 0; ; attempt++) {
+            const code = create ? createRoomCode() : segments[2];
+            const room = env.ROOMS.get(env.ROOMS.idFromName(`room:${code}`));
+            response = await room.fetch(`https://internal/${create ? 'create' : 'join'}?code=${code}`, { method: 'POST', body });
+            if (!create || response.status !== 409 || attempt === 4) break;
+            await response.body?.cancel();
+          }
         }
-      } else if (request.method === 'GET' && /^\/rooms\/[A-Z2-9]{10}\/ws$/.test(url.pathname)) {
+      } else if (request.method === 'GET' && roomRoute && segments[3] === 'ws') {
         if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'WebSocket connection required.' }, 426);
         const room = env.ROOMS.get(env.ROOMS.idFromName(`room:${url.pathname.split('/')[2]}`));
         return room.fetch(new Request('https://internal/ws', request));

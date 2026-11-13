@@ -2,6 +2,9 @@ export type Suit = 'clubs' | 'diamonds' | 'hearts' | 'spades' | 'joker';
 export type Card = { rank: number; suit: Suit };
 export type Target = { playerId: string; slot: number };
 export type SwapEvent = { id: string; actorId: string; a: Target; b: Target; at: number };
+export type CardPlace = Target | 'draw' | 'discard';
+export type CardMove = { from: CardPlace; to: CardPlace };
+export type MotionEvent = { id: string; actorId: string; kind: 'draw' | 'discard' | 'replace' | 'match' | 'penalty' | 'give'; moves: CardMove[]; at: number };
 export type Player = {
   id: string; name: string; hand: (Card | null)[]; ready: boolean;
   initial: 'waiting' | 'viewing' | 'done';
@@ -23,6 +26,7 @@ export type Game = {
   version: number; message: string; updatedAt: number;
   flash: { target: Target; card: Card; until: number } | null;
   lastSwap?: SwapEvent | null;
+  motions?: MotionEvent[];
 };
 export type Action =
   | { type: 'ready' | 'start' | 'reveal-initial' | 'close-initial' | 'draw' | 'discard' | 'close-peek' | 'skip-power' | 'cambio' | 'end-game' }
@@ -93,7 +97,7 @@ function begin(game: Game): void {
   game.drawn = null; game.power = null; game.turnComplete = false;
   game.opportunity = null; game.transfer = null; game.calledBy = null;
   game.finalTurns = null; game.exhausted = false; game.deadline = null;
-  game.winners = []; game.flash = null; game.lastSwap = null; game.gameNumber++;
+  game.winners = []; game.flash = null; game.lastSwap = null; game.motions = []; game.gameNumber++;
   game.message = 'Look at your bottom two cards. Hide them when you are ready.';
 }
 function publishDiscard(game: Game, card: Card): void {
@@ -108,6 +112,14 @@ function takeCard(game: Game): Card | null {
 function appendCard(player: Player, card: Card): void {
   // Preserve existing slots, including gaps. New penalties have a predictable location.
   player.hand.push(card);
+}
+function recordMotion(game: Game, actorId: string, kind: MotionEvent['kind'], moves: CardMove[], now: number): void {
+  const place = (p: CardPlace): CardPlace => typeof p === 'string' ? p : { playerId: p.playerId, slot: p.slot };
+  // Explicitly copy positions only; never serialize action extras or card values.
+  game.motions = [...(game.motions ?? []), {
+    id: crypto.randomUUID(), actorId, kind, at: now,
+    moves: moves.map(m => ({ from: place(m.from), to: place(m.to) })),
+  }].slice(-12);
 }
 function ending(game: Game, now: number): void {
   if (game.phase === 'ending') return;
@@ -201,14 +213,19 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
     if (card.rank !== top.rank) {
       const penalty = takeCard(game);
       if (penalty) appendCard(player, penalty);
-      game.message = `${player.name} missed the match${penalty ? ' and drew a penalty card' : '; the deck is empty'}.`;
+      recordMotion(game, id, 'penalty', [
+        { from: action.target, to: action.target },
+        ...(penalty ? [{ from: 'draw' as const, to: { playerId: id, slot: player.hand.length - 1 } }] : []),
+      ], now);
+      game.message = `${player.name} missed on ${owner.name}’s card ${action.target.slot + 1}${penalty ? ` and drew penalty card ${player.hand.length}` : '; the deck is empty'}.`;
       if (game.exhausted && game.phase === 'playing' && !game.drawn && !game.power) ending(game, now);
     } else {
       game.opportunity.open = false;
       owner.hand[action.target.slot] = null;
       game.discards.push(card); // Covers the discard without opening another opportunity.
       if (owner.id !== id) game.transfer = { from: id, to: action.target };
-      game.message = `${player.name} matched${owner.id === id ? '' : ` ${owner.name}’s card`}.`;
+      recordMotion(game, id, 'match', [{ from: action.target, to: 'discard' }], now);
+      game.message = `${player.name} matched ${owner.name}’s card ${action.target.slot + 1}.`;
     }
   } else if (action.type === 'give') {
     ensure(game.transfer?.from === id, 'There is no card for you to give.');
@@ -218,8 +235,9 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
     ensure(recipient.id !== game.calledBy, 'The caller’s hand is locked.');
     recipient.hand[game.transfer.to.slot] = card;
     player.hand[action.slot] = null;
+    recordMotion(game, id, 'give', [{ from: { playerId: id, slot: action.slot }, to: game.transfer.to }], now);
+    game.message = `${player.name} gave card ${action.slot + 1} to ${recipient.name}’s position ${game.transfer.to.slot + 1}.`;
     game.transfer = null;
-    game.message = `${player.name} gave a card to ${recipient.name}.`;
     if (game.turnComplete && game.phase === 'playing') finishTurn(game, now);
     if (game.phase === 'ending') finishIfDue(game, now);
   } else {
@@ -230,17 +248,20 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       const card = takeCard(game);
       ensure(card, 'The draw pile is empty.');
       game.drawn = card; game.message = `${player.name} drew a card.`;
+      recordMotion(game, id, 'draw', [{ from: 'draw', to: 'draw' }], now);
     } else if (action.type === 'replace') {
       ensure(game.drawn && !game.power && action.target.playerId === id, 'Choose one of your cards to replace.');
       const { card } = targetCard(game, action.target, true);
       player.hand[action.target.slot] = game.drawn;
       publishDiscard(game, card);
-      game.message = `${player.name} replaced a card.`;
+      recordMotion(game, id, 'replace', [{ from: action.target, to: 'discard' }, { from: 'draw', to: action.target }], now);
+      game.message = `${player.name} replaced card ${action.target.slot + 1}.`;
       finishTurn(game, now);
     } else if (action.type === 'discard') {
       ensure(game.drawn && !game.power, 'Draw a card first.');
       const card = game.drawn;
       publishDiscard(game, card); game.drawn = null;
+      recordMotion(game, id, 'discard', [{ from: 'draw', to: 'discard' }], now);
       if (card.rank >= 7 && card.rank <= 13) {
         const step = card.rank === 11 ? 'swap' : card.rank === 9 || card.rank === 10 ? 'other' : 'own';
         game.power = { rank: card.rank, step, reveals: [] };
@@ -336,6 +357,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     activePower: game.power?.rank ?? null,
     transfer: game.transfer, exhausted: game.exhausted, serverTime: now,
     lastSwap: game.lastSwap ?? null,
+    motions: game.motions ?? [],
   };
 }
 export type GameView = ReturnType<typeof viewFor> & { connectedIds: string[] };

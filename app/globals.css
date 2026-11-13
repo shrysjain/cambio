@@ -139,21 +139,26 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .player-hand { --hand-card-width: 44px; --hand-card-height: 60px; --hand-gap: 7px; position: relative; min-width: 0; width: calc(var(--hand-card-width) * 2 + var(--hand-gap)); flex-shrink: 0; }
 .opponent-hand { position: absolute; transform: translateX(-50%); pointer-events: auto; }
 .opponent-hand .hand-grid { transform: rotate(var(--hand-tilt, 0deg)); transform-origin: center; }
-.player-heading { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; color: var(--on-table); }
-.player-heading .player-avatar { width: 27px; height: 27px; font-size: 11px; }
+.player-heading { display: flex; gap: 8px; align-items: center; height: 32px; margin-bottom: 8px; color: var(--on-table); }
+.opponent-hand .player-heading { width: max-content; min-width: 100%; max-width: 180px; position: relative; left: 50%; transform: translateX(-50%); }
+.player-heading .player-avatar { width: 27px; height: 27px; font-size: 11px; flex-shrink: 0; }
 .player-identity { display: flex; flex-direction: column; min-width: 0; }
 .player-identity strong { font-size: 12px; font-weight: 550; line-height: 1.3; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player-identity strong small { font-size: 10px; font-weight: 400; color: var(--table-muted); margin-left: 6px; }
-.player-identity > span { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--table-muted); line-height: 1.7; }
-.turn-dot { width: 6px; height: 6px; border-radius: 50%; background: #efd68a; margin-left: 2px; box-shadow: 0 0 0 3px #efd68a18; }
-.hand-grid { display: grid; width: calc(var(--hand-card-width) * 2 + var(--hand-gap)); grid-template-columns: repeat(2, var(--hand-card-width)); grid-auto-columns: var(--hand-card-width); grid-auto-rows: var(--hand-card-height); gap: var(--hand-gap); position: relative; }
+.player-identity > span { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--table-muted); line-height: 1.7; white-space: nowrap; }
+.turn-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #efd68a; margin-left: 2px; box-shadow: 0 0 0 3px #efd68a18; }
+.hand-grid { width: calc(var(--hand-card-width) * 2 + var(--hand-gap)); height: calc(var(--hand-card-height) * 2 + var(--hand-gap)); position: relative; }
+.hand-grid > .playing-card { position: absolute; left: calc(var(--slot-column) * (var(--hand-card-width) + var(--hand-gap))); top: calc(var(--slot-row) * (var(--hand-card-height) + var(--hand-gap))); }
+.slot-number { position: absolute; bottom: 4px; left: 4px; min-width: 14px; padding: 1px 3px; border-radius: 3px; background: #173f30; color: #e6efe8; font: 500 9px/1.2 -apple-system, BlinkMacSystemFont, sans-serif; font-variant-numeric: tabular-nums; pointer-events: none; }
+.playing-card.small .slot-number { min-width: 12px; bottom: 3px; left: 3px; font-size: 8px; }
+.empty-slot .slot-number { opacity: .5; }
 .hand-grid button.playing-card:not(:disabled):hover, .hand-grid button.playing-card:active:not(:disabled), .hand-grid .playing-card.selected { transform: none; }
 .opponent-hand .playing-card.small { width: var(--hand-card-width); height: var(--hand-card-height); }
 .opponent-hand .playing-card.small .card-corner b { font-size: 13px; }
 .opponent-hand .playing-card.small .card-suit { font-size: 21px; }
 .opponent-hand .playing-card.small .card-corner span { font-size: 9px; }
 .active-hand .player-heading { color: #fff; }
-.active-hand::before { content: ''; position: absolute; inset: -13px -14px -12px; border: 1px solid #e4d59080; border-radius: 14px; background: #f4e9b40d; box-shadow: 0 0 24px #fff2c213; pointer-events: none; z-index: -1; }
+.active-hand::before { content: ''; position: absolute; top: -13px; bottom: -12px; left: calc(var(--hand-first-column, 0) * (var(--hand-card-width) + var(--hand-gap)) - 14px); width: calc(var(--hand-columns, 2) * var(--hand-card-width) + (var(--hand-columns, 2) - 1) * var(--hand-gap) + 28px); border: 1px solid #e4d59080; border-radius: 14px; background: #f4e9b40d; box-shadow: 0 0 24px #fff2c213; pointer-events: none; z-index: -1; }
 .active-hand .player-identity > span { color: #f4dfa0; font-weight: 650; }
 .active-hand .player-avatar { box-shadow: 0 0 0 2px #ead290b0; }
 .locked-hand .player-identity > span { color: #f1da9a; }
@@ -177,6 +182,7 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .swap-ghost { position: fixed; margin: 0; z-index: 100; pointer-events: none; transform-origin: center; }
 .playing-card.swap-origin { opacity: .15; }
 .playing-card.swap-recent { box-shadow: 0 0 0 3px #f0d17c, 0 3px 10px #061a1340; }
+.playing-card.motion-recent { box-shadow: 0 0 0 2px #f0d17c, 0 0 14px #f0d17c35; }
 .playing-card.being-peeked { box-shadow: 0 0 0 3px #b6ead4, 0 0 16px #b6ead440; }
 .peek-indicator { position: absolute; top: -8px; right: -8px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; background: #b6ead4; color: #172f25; border: 2px solid #214332; pointer-events: none; }
 .action-bar { position: absolute; bottom: 28px; right: 32px; width: min(320px, calc(50% - 130px)); display: flex; flex-direction: column; align-items: stretch; gap: 16px; z-index: 4; color: var(--on-table); }
@@ -205,7 +211,7 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 500; line-height: 1; p
 .table-footer > span { display: inline-flex; gap: 6px; align-items: center; }
 .table-footer .text-button { font-size: 10px; padding-block: 3px; }
 .large-room { min-height: 650px; }
-.shuffle-indicator { position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%); display: flex; gap: 8px; align-items: center; background: var(--table-deep); color: var(--on-table); padding: 12px 18px; border-radius: 8px; box-shadow: 0 3px 12px #102e2340; font-size: 12px; }
+.shuffle-indicator { display: inline-flex; gap: 7px; align-items: center; color: var(--on-table); padding-top: 5px; font-size: 11px; white-space: nowrap; }
 .dealing .player-hand .playing-card { animation: deal-in 360ms cubic-bezier(.2,.6,.3,1) both; animation-delay: calc(150ms + var(--card-index) * 24ms); }
 .dealing .deck-stack { animation: shuffle 300ms ease-in-out 2; }
 @keyframes deal-in { from { opacity: 0; transform: translateY(-35px) scale(.85); } to { opacity: 1; transform: translateY(0) scale(1); } }

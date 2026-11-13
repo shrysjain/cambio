@@ -1,8 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addPlayer, applyAction, finishIfDue, newGame, score, shuffledDeck, value, viewFor, type Card, type Game } from '../lib/game.ts';
+import { createRoomCode, normalizeRoomCode, validRoomCode } from '../lib/room-code.ts';
+import { handColumns, handPosition } from '../lib/table-layout.ts';
 
 const card = (rank: number, suit: Card['suit'] = 'clubs'): Card => ({ rank, suit });
+test('new room codes are four characters and existing invitations stay valid', () => {
+  for (let i = 0; i < 20; i++) { const code = createRoomCode(); assert.match(code, /^[A-Z0-9]{4}$/); assert.ok(validRoomCode(code)); }
+  assert.equal(normalizeRoomCode(' ab-7k '), 'AB7K');
+  assert.ok(validRoomCode('AB7K')); assert.ok(validRoomCode('ABCDEFGH23'));
+  for (const bad of ['ABC', 'ABCDE', 'AB!K', '../x', 'abcdefgh23']) assert.equal(validRoomCode(bad), false);
+});
+test('opponent slots face the viewer and penalty columns never move existing positions', () => {
+  assert.deepEqual([0, 1, 2, 3].map(i => handPosition(i)), [{ row: 0, column: 0 }, { row: 0, column: 1 }, { row: 1, column: 0 }, { row: 1, column: 1 }]);
+  assert.deepEqual([0, 1, 2, 3].map(i => handPosition(i, true)), [{ row: 1, column: 1 }, { row: 1, column: 0 }, { row: 0, column: 1 }, { row: 0, column: 0 }]);
+  assert.deepEqual(handPosition(4), { row: 0, column: 2 }); assert.deepEqual(handPosition(4, true), { row: 1, column: -1 });
+  assert.deepEqual([4, 5, 6, 7].map(handColumns), [2, 3, 3, 4]);
+});
 function table(count = 3): Game {
   const g = newGame('ABCDEFGH23', 'a', 'Alex', 1000);
   for (let i = 1; i < count; i++) addPlayer(g, String.fromCharCode(97 + i), `Player ${i + 1}`);
@@ -79,6 +93,22 @@ test('drawn cards are private and replacement discards never activate a power', 
   assert.equal(viewFor(g, 'a').drawn?.rank, 4); assert.equal(viewFor(g, 'b').drawn, null);
   applyAction(g, 'a', { type: 'replace', target: { playerId: 'a', slot: 0 } });
   assert.equal(g.power, null); assert.equal(g.discards.at(-1)?.rank, 13); assert.equal(g.active, 1);
+});
+
+test('draws and replacements broadcast identical public paths without action extras or hidden values', () => {
+  const g = playing(); g.deck = [card(2), card(13, 'hearts')]; g.players[0].hand[2] = card(4);
+  applyAction(g, 'a', { type: 'draw' }, 1001);
+  const target = { playerId: 'a', slot: 2, privateCard: card(13, 'hearts') };
+  applyAction(g, 'a', { type: 'replace', target }, 1002);
+  const motions = g.motions!;
+  assert.deepEqual(motions.map(e => e.kind), ['draw', 'replace']);
+  assert.deepEqual(motions[1].moves, [{ from: { playerId: 'a', slot: 2 }, to: 'discard' }, { from: 'draw', to: { playerId: 'a', slot: 2 } }]);
+  assert.doesNotMatch(JSON.stringify(motions), /rank|suit|privateCard/);
+  for (const id of ['a', 'b', 'c']) {
+    assert.deepEqual(viewFor(g, id).motions, motions);
+    assert.equal(viewFor(g, id).players[0].hand[2]?.face, null);
+  }
+  assert.equal(g.players[0].hand[2]?.suit, 'hearts'); assert.equal(g.discards.at(-1)?.rank, 4);
 });
 
 test('queen can peek at your card then swap two different opponents’ cards', () => {
@@ -161,6 +191,11 @@ test('wrong opponent matches restore the card, penalize the matcher, and allow a
   applyAction(g, 'b', { type: 'match', target: { playerId: 'c', slot: 1 }, opportunityId }, 1100);
   applyAction(g, 'b', { type: 'give', slot: 0 }, 1101);
   assert.equal(g.players[2].hand[1]?.rank, 2); assert.equal(g.players[1].hand[0], null);
+  assert.deepEqual(g.motions!.slice(-3).map(e => [e.kind, e.moves]), [
+    ['penalty', [{ from: { playerId: 'c', slot: 0 }, to: { playerId: 'c', slot: 0 } }, { from: 'draw', to: { playerId: 'b', slot: 2 } }]],
+    ['match', [{ from: { playerId: 'c', slot: 1 }, to: 'discard' }]],
+    ['give', [{ from: { playerId: 'b', slot: 0 }, to: { playerId: 'c', slot: 1 } }]],
+  ]);
   // A public match flash must not reveal the replacement card after a transfer.
   assert.equal(viewFor(g, 'a', 1102).players[2].hand[1]?.face, null);
 });

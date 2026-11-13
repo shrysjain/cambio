@@ -38,6 +38,7 @@ async function play(count) {
   const clients = [];
   try {
     const host = await post('/rooms', { name: `Test host ${count}` });
+    assert.match(host.code, /^[A-Z0-9]{4}$/);
     clients.push(await connect(host));
     for (let i = 1; i < count; i++) clients.push(await connect(await post(`/rooms/${host.code}/join`, { name: `Test friend ${i}` })));
     for (const c of clients) await action(c, { type: 'ready' });

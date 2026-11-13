@@ -98,7 +98,7 @@ export default function Home() {
   const [clock, setClock] = useState(Date.now());
   const [buildClock, setBuildClock] = useState(0);
   const [serverHealth, setServerHealth] = useState<'connecting' | 'connected' | 'failed'>('connecting');
-  const [roomModal, setRoomModal] = useState<'join' | 'browse' | null>(null);
+  const [roomModal, setRoomModal] = useState<'join' | 'browse' | 'invite' | null>(null);
   const [listedRooms, setListedRooms] = useState<ListedRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [roomsError, setRoomsError] = useState('');
@@ -170,8 +170,12 @@ export default function Home() {
     try {
       setName(localStorage.getItem('cambio:name') ?? '');
       const saved = room ? localStorage.getItem(`cambio:seat:${room}`) : null;
-      if (saved) setSeat(JSON.parse(saved));
+      if (saved) {
+        const restored = JSON.parse(saved) as Seat;
+        if (restored.code === room && typeof restored.playerId === 'string' && typeof restored.token === 'string') { setSeat(restored); return; }
+      }
     } catch { /* Storage is optional for joining; reconnect works while the tab stays open. */ }
+    if (validRoomCode(room)) { setJoinNeedsName(true); setRoomModal('invite'); }
   }, []);
   useEffect(() => {
     if (!seat || !API) return;
@@ -514,8 +518,8 @@ export default function Home() {
       </main>}
 
     {(!state || state.phase === 'lobby' || state.phase === 'finished') && <footer className="vanity-footer screen-credits">{credits}</footer>}
-    <dialog ref={roomDialog} className="rooms-dialog" onCancel={() => setRoomModal(null)} onClose={() => setRoomModal(null)} onClick={e => { if (e.target === e.currentTarget) setRoomModal(null); }}>
-      <div className="dialog-heading"><h2>{roomModal === 'browse' ? 'Rooms' : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
+    <dialog ref={roomDialog} className="rooms-dialog" aria-labelledby="room-dialog-title" onCancel={() => setRoomModal(null)} onClose={() => setRoomModal(null)} onClick={e => { if (e.target === e.currentTarget) setRoomModal(null); }}>
+      <div className="dialog-heading"><h2 id="room-dialog-title">{roomModal === 'browse' ? 'Rooms' : roomModal === 'invite' ? `You’re invited to room ${code}` : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
       {roomModal === 'browse' ? <div className="room-list" aria-live="polite">
         {roomsLoading ? <p className="muted">Loading rooms…</p> : roomsError ? <p role="alert">{roomsError}</p> : listedRooms.length === 0 ? <p className="muted">No rooms open</p> : listedRooms.map(room => <div className="room-list-row" key={room.id}>
           <div className="room-list-info"><strong><Icon name="lock" size={13}/><span className="sr-only">Private room · </span>{room.hostName}</strong><span>{room.players}/10 players · game {room.gameNumber ?? 1}</span></div>
@@ -523,8 +527,8 @@ export default function Home() {
         </div>)}
       </div> : <form className="room-code-form" onSubmit={e => join(false, e)}>
         {selectedRoom && <p className="muted selected-room"><Icon name="lock" size={12}/> {selectedRoom.hostName}</p>}
-        {joinNeedsName && <><label htmlFor="join-name">Your name</label><input id="join-name" autoComplete="nickname" value={name} onChange={e => setName(e.target.value)} maxLength={24} required disabled={busy}/></>}
-        <label htmlFor="join-code">Room code</label><input id="join-code" autoFocus className="code-input" autoComplete="off" spellCheck={false} value={formatCode(code)} onChange={e => setCode(normalizeRoomCode(e.target.value))} maxLength={12} placeholder="AB7K" required disabled={busy}/>
+        {joinNeedsName && <><label htmlFor="join-name">Your name</label><input id="join-name" autoFocus={roomModal === 'invite'} autoComplete="nickname" value={name} onChange={e => setName(e.target.value)} maxLength={24} required disabled={busy}/></>}
+        {roomModal !== 'invite' && <><label htmlFor="join-code">Room code</label><input id="join-code" autoFocus className="code-input" autoComplete="off" spellCheck={false} value={formatCode(code)} onChange={e => setCode(normalizeRoomCode(e.target.value))} maxLength={12} placeholder="AB7K" required disabled={busy}/></>}
         {error && <p className="join-error" role="alert">{error}</p>}
         <button className="button primary" type="submit" disabled={busy}>{busy ? 'Joining…' : 'Join room'}</button>
       </form>}

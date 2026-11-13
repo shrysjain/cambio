@@ -7,7 +7,7 @@ const config: NextConfig = {
   turbopack: { root: process.cwd() },
   env: {
     NEXT_PUBLIC_BUILD_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? 'local',
-    NEXT_PUBLIC_BUILD_TIME: process.env.VERCEL_GIT_COMMIT_COMMIT_DATE ?? new Date().toISOString(),
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
 };
 export default config;

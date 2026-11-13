@@ -11,9 +11,9 @@ type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 const API = process.env.NEXT_PUBLIC_GAME_SERVER || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8787' : '');
 const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'local';
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
-function buildAge() {
-  if (!BUILD_TIME) return 'recently';
-  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(BUILD_TIME)) / 60000));
+function buildAge(now: number) {
+  if (!BUILD_TIME || !now) return 'recently';
+  const minutes = Math.max(0, Math.floor((now - Date.parse(BUILD_TIME)) / 60000));
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
@@ -95,6 +95,30 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [dealing, setDealing] = useState(false);
   const [clock, setClock] = useState(Date.now());
+  const [buildClock, setBuildClock] = useState(0);
+  const [serverHealth, setServerHealth] = useState<'connecting' | 'connected' | 'failed'>('connecting');
+  useEffect(() => {
+    setBuildClock(Date.now());
+    const timer = setInterval(() => setBuildClock(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (seat) return;
+    let disposed = false;
+    const controller = new AbortController();
+    async function check() {
+      try {
+        if (!API) throw new Error('No server configured');
+        const response = await fetch(`${API.replace(/\/$/, '')}/health`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
+        const body = await response.json();
+        if (!response.ok || body.ok !== true) throw new Error('Server unavailable');
+        if (!disposed) setServerHealth('connected');
+      } catch { if (!disposed) setServerHealth('failed'); }
+    }
+    setServerHealth('connecting'); check();
+    const timer = setInterval(check, 30000);
+    return () => { disposed = true; controller.abort(); clearInterval(timer); };
+  }, [seat]);
   const socket = useRef<WebSocket | null>(null);
   const latest = useRef<GameView | null>(null);
   const selectedVersion = useRef<number>(0);
@@ -377,13 +401,12 @@ export default function Home() {
   return <div className={`app ${seat ? 'at-table' : ''}`}>
     <header className="site-header">
       <button className="wordmark" onClick={() => { if (seat) leave(); else window.history.replaceState({}, '', '/'); }} aria-label="Cambio home"><Icon name="cards" size={26}/><span>cambio</span></button>
-      <div className="header-right">{state && <span className={`connection-status ${online ? '' : 'offline'}`}><i/>{online ? 'Connected' : connection === 'closed' ? 'Disconnected' : 'Reconnecting'}</span>}<button className="text-button" onClick={() => setRules(true)}>How to play</button>{seat && <button className="icon-button" title="Leave table (your seat is saved)" aria-label="Leave table" onClick={leave}><Icon name="exit"/></button>}</div>
+      <div className="header-right"><span role="status" className={`connection-status ${seat ? online ? '' : connection === 'closed' ? 'failed' : 'offline' : serverHealth === 'failed' ? 'failed' : serverHealth === 'connecting' ? 'offline' : ''}`}><i/>{seat ? online ? 'Connected' : connection === 'closed' ? 'Disconnected' : 'Connecting' : serverHealth === 'connected' ? 'Connected to server' : serverHealth === 'failed' ? 'Failed to connect' : 'Connecting to server'}</span><button className="text-button" onClick={() => setRules(true)}>How to play</button>{seat && <button className="icon-button" title="Leave table (your seat is saved)" aria-label="Leave table" onClick={leave}><Icon name="exit"/></button>}</div>
     </header>
 
     {!seat ? <main className="home">
       <section className="welcome-panel">
-        <span className="eyebrow"><Icon name="users" size={15}/> Private games with friends</span>
-        <h1>Cambio,<br/>with friends.</h1>
+        <h1>Cambio,<br/>with friends</h1>
         <p className="home-description">Create a private table or join with a room code.<br/>Remember your cards. Aim for the lowest score.</p>
         <form className="join-form" onSubmit={e => join(false, e)}>
           <label htmlFor="player-name">Your name</label>
@@ -400,7 +423,7 @@ export default function Home() {
       </section>
     </main> : !state ? <main className="loading-view"><span className="spinner"/><h1>Taking your seat…</h1><p>{connection === 'closed' ? error : 'Connecting to your private table.'}</p><button className="button secondary" onClick={leave}>Back to home</button></main>
       : state.phase === 'lobby' ? <main className="lobby">
-        <section className="lobby-main"><span className="eyebrow"><Icon name="lock" size={14}/> Private table</span><h1>Make room for friends.</h1><p className="muted">Share the invite, get everyone ready, and deal.</p>
+        <section className="lobby-main"><span className="eyebrow"><Icon name="lock" size={14}/> Private table</span><h1>Make room for friends</h1><p className="muted">Share the invite, get everyone ready, and deal.</p>
           <button className="invite-box" onClick={copyInvite}><span><small>ROOM CODE</small><strong>{formatCode(state.code)}</strong></span><span className="invite-action"><Icon name={copied ? 'check' : 'copy'}/>{copied ? 'Copied link' : 'Copy invite'}</span></button>
           {queenSettings()}
           <div className="lobby-players"><div className="list-heading"><span>At the table</span><span>{state.players.length} / 10</span></div>{state.players.map((p, i) => <div className="lobby-player" key={p.id}><span className={`player-avatar avatar-${i % 5}`}>{p.name[0].toUpperCase()}</span><span className="lobby-player-name">{p.name}{p.id === me?.id && <small>you</small>}{p.id === state.hostId && <small className="host-label">host</small>}</span><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{!state.connectedIds.includes(p.id) ? 'Disconnected' : p.ready ? <><Icon name="check" size={14}/> Ready</> : 'Not ready'}</span>{me?.id === state.hostId && p.id !== me.id && !state.connectedIds.includes(p.id) && <button className="text-button remove-player" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>
@@ -441,8 +464,7 @@ export default function Home() {
           {(state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!online || pending || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
         </div></section>
         </div>
-        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span>{me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>}</footer>
-        <div className="vanity-footer"><span>Build {BUILD_SHA.slice(0, 7)} · deployed {buildAge()}</span><span>Developed with <span aria-label="love">♥</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">Shreyas Jain</a></span></div>
+        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span><span className="vanity-footer"><span>build {BUILD_SHA.slice(0, 7)} deployed {buildAge(buildClock)}</span><span aria-hidden="true">·</span><span>developed with ❤️ by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">shreyas jain</a></span><span aria-hidden="true">·</span><span>all rights reserved</span></span>{me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>}</footer>
       </main>}
 
     {error && <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}

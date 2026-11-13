@@ -3,7 +3,7 @@ import { createRoomCode, validRoomCode } from '../lib/room-code.ts';
 
 interface Env { ROOMS: DurableObjectNamespace; ALLOWED_ORIGINS: string }
 type StoredRoom = { game: Game; credentials: Record<string, string>; handled: Record<string, string[]>; directoryId?: string };
-type RoomListing = { id: string; hostName: string; players: number; round: number; phase: Game['phase']; updatedAt: number; private: true };
+type RoomListing = { id: string; hostName: string; players: number; gameNumber: number; phase: Game['phase']; updatedAt: number; private: true };
 type Session = { playerId?: string; created: number; bucket: number; count: number };
 const DAY = 24 * 60 * 60 * 1000;
 const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -80,8 +80,8 @@ export class GameRoom {
           if (request.method === 'POST') {
             const entry = await request.json() as RoomListing & { connected: boolean };
             if (entry.connected) {
-              const { id, hostName, players, round, phase, updatedAt } = entry;
-              await this.ctx.storage.put(`listing:${id}`, { id, hostName, players, round, phase, updatedAt, private: true });
+              const { id, hostName, players, gameNumber, phase, updatedAt } = entry;
+              await this.ctx.storage.put(`listing:${id}`, { id, hostName, players, gameNumber, phase, updatedAt, private: true });
             } else await this.ctx.storage.delete(`listing:${entry.id}`);
             return json({ ok: true });
           }
@@ -165,7 +165,7 @@ export class GameRoom {
     try {
       await this.env.ROOMS.get(this.env.ROOMS.idFromName('directory')).fetch('https://internal/directory', {
         method: 'POST', body: JSON.stringify({ id: stored.directoryId, hostName: game.players.find(p => p.id === game.hostId)?.name ?? 'Host', players: game.players.length,
-          round: game.phase === 'lobby' ? 1 : Math.max(1, Math.floor(game.turns / Math.max(1, game.players.length)) + 1), phase: game.phase,
+          gameNumber: Math.max(1, game.gameNumber), phase: game.phase,
           updatedAt: game.updatedAt, private: true, connected: this.connected().length > 0 }),
       });
     } catch { /* Room play remains available if the directory is temporarily unavailable. */ }

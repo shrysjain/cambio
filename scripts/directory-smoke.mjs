@@ -12,8 +12,8 @@ try {
  const host=await connect(a.data); const other=await connect(b.data);
  let listing;
  await until(async()=>{listing=(await list()).find(r=>r.hostName===name);return !!listing;});
- assert.deepEqual(Object.keys(listing).sort(),['hostName','id','phase','players','private','round','updatedAt']);
- assert.equal(listing.players,1);assert.equal(listing.round,1);assert.equal(listing.private,true);assert.notEqual(listing.id,a.data.code);
+ assert.deepEqual(Object.keys(listing).sort(),['gameNumber','hostName','id','phase','players','private','updatedAt']);
+ assert.equal(listing.players,1);assert.equal(listing.gameNumber,1);assert.equal(listing.private,true);assert.notEqual(listing.id,a.data.code);
  const wrong=await post(`/rooms/${b.data.code}/join`,{name:'Wrong room',roomId:listing.id});assert.equal(wrong.status,400);assert.match(wrong.data.error,/does not match/);
  const joined=await post(`/rooms/${a.data.code}/join`,{name:'Directory guest',roomId:listing.id});assert.equal(joined.status,200);
  const guest=await connect(joined.data);

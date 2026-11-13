@@ -8,7 +8,7 @@ import { handColumns, handPosition } from '@/lib/table-layout';
 
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
-type ListedRoom = { id: string; hostName: string; players: number; round: number; phase: string; private: boolean };
+type ListedRoom = { id: string; hostName: string; players: number; gameNumber: number; phase: string; private: boolean };
 const API = process.env.NEXT_PUBLIC_GAME_SERVER || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8787' : '');
 const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'local';
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
@@ -507,8 +507,8 @@ export default function Home() {
       <div className="dialog-heading"><h2>{roomModal === 'browse' ? 'Rooms' : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
       {roomModal === 'browse' ? <div className="room-list" aria-live="polite">
         {roomsLoading ? <p className="muted">Loading rooms…</p> : roomsError ? <p role="alert">{roomsError}</p> : listedRooms.length === 0 ? <p className="muted">No rooms open</p> : listedRooms.map(room => <div className="room-list-row" key={room.id}>
-          <div className="room-list-info"><strong><Icon name="lock" size={13}/><span className="sr-only">Private room · </span>{room.hostName}</strong><span>{room.players}/10 players · round {room.round}{room.phase !== 'lobby' && room.phase !== 'finished' ? ' · playing' : ''}</span></div>
-          <button className="button secondary" disabled={room.players >= 10 || (room.phase !== 'lobby' && room.phase !== 'finished')} onClick={() => openJoin(room)}>{room.players >= 10 ? 'Full' : 'Join'}</button>
+          <div className="room-list-info"><strong><Icon name="lock" size={13}/><span className="sr-only">Private room · </span>{room.hostName}</strong><span>{room.players}/10 players · game {room.gameNumber ?? 1}</span></div>
+          <button className="button secondary" disabled={room.players >= 10 || (room.phase !== 'lobby' && room.phase !== 'finished')} onClick={() => openJoin(room)}>{room.phase !== 'lobby' && room.phase !== 'finished' ? 'Game in progress' : room.players >= 10 ? 'Full' : 'Join'}</button>
         </div>)}
       </div> : <form className="room-code-form" onSubmit={e => join(false, e)}>
         {selectedRoom && <p className="muted selected-room"><Icon name="lock" size={12}/> {selectedRoom.hostName}</p>}

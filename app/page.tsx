@@ -9,6 +9,17 @@ import { handColumns, handPosition } from '@/lib/table-layout';
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 const API = process.env.NEXT_PUBLIC_GAME_SERVER || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8787' : '');
+const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'local';
+const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
+function buildAge() {
+  if (!BUILD_TIME) return 'recently';
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(BUILD_TIME)) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 const suits = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠', joker: '✦' };
 const same = (a: Target | null, b: Target) => !!a && a.playerId === b.playerId && a.slot === b.slot;
 const formatCode = (code: string) => code.length === 10 ? `${code.slice(0, 5)} ${code.slice(5)}` : code;
@@ -431,6 +442,7 @@ export default function Home() {
         </div></section>
         </div>
         <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span>{me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>}</footer>
+        <div className="vanity-footer"><span>Build {BUILD_SHA.slice(0, 7)} · deployed {buildAge()}</span><span>Developed with <span aria-label="love">♥</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">Shreyas Jain</a></span></div>
       </main>}
 
     {error && <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}

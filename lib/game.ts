@@ -18,6 +18,7 @@ export type Power = {
   received?: { target: Target; card: Card }[];
 };
 export type Game = {
+  disconnectedAt?: Record<string, number>;
   session?: { games: number; players: Record<string, SessionScore> };
   code: string; hostId: string; players: Player[];
   phase: 'lobby' | 'peek' | 'playing' | 'ending' | 'finished';
@@ -41,6 +42,7 @@ export type Action =
   | { type: 'match'; target: Target; opportunityId: string }
   | { type: 'give'; slot: number }
   | { type: 'remove'; playerId: string }
+  | { type: 'recover-player'; playerId: string }
   | { type: 'set-queen-rule'; rule: QueenRule };
 
 export function value(card: Card): number {
@@ -178,14 +180,46 @@ function updateInitial(game: Game, player: Player): void {
     game.phase = 'playing'; game.message = `${game.players[game.active].name} goes first.`;
   }
 }
+export const DISCONNECT_GRACE_MS = 20000;
+export function syncPresence(game: Game, connectedIds: string[], now = Date.now()): void {
+  game.disconnectedAt ??= {};
+  for (const id of Object.keys(game.disconnectedAt)) if (connectedIds.includes(id) || !game.players.some(p => p.id === id)) delete game.disconnectedAt[id];
+  for (const p of game.players) if (!connectedIds.includes(p.id)) game.disconnectedAt[p.id] ??= now;
+}
 export function applyAction(game: Game, id: string, action: Action, now = Date.now()): void {
   const player = playerById(game, id);
   ensure(action && typeof action.type === 'string', 'Invalid action.');
   // Deadline admission is checked before all actions, not only by a timer callback.
   if (game.phase === 'ending' && game.deadline !== null && now >= game.deadline) {
-    ensure(action.type === 'give', 'The matching window has closed.');
+    ensure(action.type === 'give' || (action.type === 'recover-player' && game.transfer?.from === action.playerId), 'The matching window has closed.');
   }
-  if (action.type === 'set-queen-rule') {
+  if (action.type === 'recover-player') {
+    ensure(id === game.hostId, 'Only the host can recover an abandoned turn.');
+    const absent = playerById(game, action.playerId);
+    const since = game.disconnectedAt?.[absent.id];
+    ensure(since !== undefined && now - since >= DISCONNECT_GRACE_MS, 'Wait until the player has been disconnected for 20 seconds.');
+    if (game.phase === 'peek') {
+      ensure(absent.initial !== 'done', 'That player has finished their opening look.');
+      absent.initialCards = ['done', 'done']; updateInitial(game, absent);
+      game.message = `${player.name} continued without ${absent.name}’s opening look.`;
+    } else {
+      ensure(game.phase === 'playing' || game.phase === 'ending', 'There is no abandoned turn to recover.');
+      const owesCard = game.transfer?.from === absent.id;
+      const wasActive = game.players[game.active].id === absent.id && game.phase === 'playing';
+      ensure(owesCard || wasActive, 'That player is not holding up play.');
+      ensure(!game.transfer || owesCard, 'Finish the pending card transfer first.');
+      if (owesCard) {
+        const slots = absent.hand.flatMap((card, slot) => card ? [slot] : []);
+        ensure(slots.length, 'There is no card to transfer.');
+        applyAction(game, absent.id, { type: 'give', slot: slots[randomIndex(slots.length)] }, now);
+      }
+      if (wasActive && game.phase === 'playing' && game.players[game.active].id === absent.id) {
+        if (game.drawn) { publishDiscard(game, game.drawn); recordMotion(game, absent.id, 'discard', [{ from: 'draw', to: 'discard' }], now); }
+        finishTurn(game, now);
+        if (game.phase === 'playing') game.message = `${player.name} skipped ${absent.name}’s turn. Their seat is saved.`;
+      } else if (owesCard && game.phase === 'playing') game.message = `${player.name} completed ${absent.name}’s card transfer.`;
+    }
+  } else if (action.type === 'set-queen-rule') {
     ensure(id === game.hostId && (game.phase === 'lobby' || game.phase === 'finished'), 'Only the host can change the Queen rule between games.');
     ensure(action.rule === 'look-then-swap' || action.rule === 'swap-then-look', 'Choose a valid Queen rule.');
     if ((game.queenRule ?? 'look-then-swap') !== action.rule) {
@@ -361,6 +395,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     code: game.code, hostId: game.hostId, phase: game.phase,
     activeId: game.players[game.active]?.id, turns: game.turns,
     gameNumber: game.gameNumber, version: game.version,
+    disconnectedAt: game.disconnectedAt ?? {},
     players: game.players.map(p => ({
       id: p.id, name: p.name, ready: p.ready, initial: p.initial,
       initialCards: p.id === id ? p.initialCards ?? [p.initial, p.initial] : null,

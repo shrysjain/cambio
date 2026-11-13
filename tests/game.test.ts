@@ -1,10 +1,77 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addPlayer, applyAction, finishIfDue, newGame, score, shuffledDeck, value, viewFor, type Card, type Game } from '../lib/game.ts';
+import { addPlayer, applyAction, finishIfDue, newGame, score, shuffledDeck, syncPresence, value, viewFor, type Card, type Game } from '../lib/game.ts';
 import { createRoomCode, normalizeRoomCode, validRoomCode } from '../lib/room-code.ts';
 import { handColumns, handPosition } from '../lib/table-layout.ts';
 
 const card = (rank: number, suit: Card['suit'] = 'clubs'): Card => ({ rank, suit });
+test('recovery requires the host and 20 continuous offline seconds; hands and win eligibility survive', () => {
+  const g = playing(); g.active = 1;
+  g.players[0].hand = [card(8)]; g.players[1].hand = [card(13, 'hearts'), null]; g.players[2].hand = [card(9)];
+  syncPresence(g, ['a', 'c'], 1000); syncPresence(g, ['a', 'c'], 9000);
+  assert.equal(g.disconnectedAt?.b, 1000);
+  assert.throws(() => applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 20999), /20 seconds/);
+  syncPresence(g, ['a', 'b', 'c'], 15000);
+  assert.throws(() => applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 25000), /20 seconds/);
+  syncPresence(g, ['a', 'c'], 16000);
+  assert.throws(() => applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 35999), /20 seconds/);
+  assert.throws(() => applyAction(g, 'c', { type: 'recover-player', playerId: 'b' }, 36000), /Only the host/);
+  const hand = structuredClone(g.players[1].hand);
+  applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 36000);
+  assert.equal(g.active, 2); assert.equal(g.turns, 1); assert.deepEqual(g.players[1].hand, hand);
+  assert.throws(() => applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 36001), /not holding up/);
+  applyAction(g, 'a', { type: 'end-game' }, 37000); finishIfDue(g, 42000);
+  assert.deepEqual(g.winners, ['b']); assert.equal(g.session?.players.b.wins, 1);
+});
+
+test('recovering the final drawn card discards without activating its power and keeps the final match window', () => {
+  const g = playing(); g.active = 1; g.deck = [card(12)];
+  applyAction(g, 'b', { type: 'draw' }, 1000); syncPresence(g, ['a', 'c'], 1000);
+  const hands = structuredClone(g.players.map(p => p.hand));
+  applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 21000);
+  assert.equal(g.discards.at(-1)?.rank, 12); assert.equal(g.drawn, null); assert.equal(g.power, null);
+  assert.deepEqual(g.players.map(p => p.hand), hands);
+  assert.equal(g.phase, 'ending'); assert.equal(g.deadline, 26000); assert.equal(g.opportunity?.open, true);
+});
+
+test('recovery cancels private power peeks and completes abandoned initial peeks without revealing hands', () => {
+  const g = playing(); g.active = 1; discard(g, 13);
+  applyAction(g, 'b', { type: 'peek', target: { playerId: 'b', slot: 0 } });
+  const hands = structuredClone(g.players.map(p => p.hand));
+  syncPresence(g, ['a', 'c'], 1000);
+  applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 21000);
+  assert.equal(g.power, null); assert.deepEqual(g.players.map(p => p.hand), hands);
+  assert.ok(viewFor(g, 'b').players.every(p => p.hand.every(c => !c?.face && !c?.peekedBy)));
+  const initial = table();
+  for (const id of ['a', 'c']) { applyAction(initial, id, { type: 'reveal-initial' }); applyAction(initial, id, { type: 'close-initial' }); }
+  syncPresence(initial, ['a', 'c'], 1000);
+  const original = structuredClone(initial.players[1].hand);
+  applyAction(initial, 'a', { type: 'recover-player', playerId: 'b' }, 21000);
+  assert.equal(initial.phase, 'playing'); assert.equal(initial.players[1].initial, 'done');
+  assert.deepEqual(initial.players[1].hand, original);
+  assert.ok(viewFor(initial, 'b').players[1].hand.every(c => !c?.face));
+});
+
+test('recovering an off-turn transfer preserves the active power and hides the randomly given card', () => {
+  const g = playing(); discard(g, 7); g.players[1].hand = [null, card(9), null]; g.players[2].hand[0] = card(7);
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'c', slot: 0 }, opportunityId: g.opportunity!.id }, 1000);
+  syncPresence(g, ['a', 'c'], 1000);
+  applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 21000);
+  assert.equal(g.transfer, null); assert.equal(g.active, 0); assert.equal(g.power?.rank, 7);
+  assert.deepEqual(g.players[1].hand, [null, null, null]); assert.equal(g.players[2].hand[0]?.rank, 9);
+  for (const id of ['a', 'b', 'c']) assert.equal(viewFor(g, id, 21000).players[2].hand[0]?.face, null);
+});
+
+test('recovery can complete a transfer after the final deadline and score exactly once', () => {
+  const g = playing(); discard(g, 7); g.players[1].hand = [card(3)]; g.players[2].hand[0] = card(7);
+  applyAction(g, 'a', { type: 'end-game' }, 1000);
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'c', slot: 0 }, opportunityId: g.opportunity!.id }, 1001);
+  syncPresence(g, ['a', 'c'], 1001);
+  assert.equal(finishIfDue(g, 6000), false);
+  applyAction(g, 'a', { type: 'recover-player', playerId: 'b' }, 21001);
+  assert.equal(g.phase, 'finished'); assert.equal(g.transfer, null); assert.equal(g.session?.games, 1);
+  assert.equal(finishIfDue(g, 22000), false); assert.equal(g.session?.games, 1);
+});
 test('session scores count outright wins, tied wins, signed points, and each game exactly once', () => {
   const g = playing();
   g.players[0].hand = [card(13, 'hearts'), null]; g.players[1].hand = [card(0, 'joker')]; g.players[2].hand = [card(3)];

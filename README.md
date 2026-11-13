@@ -29,7 +29,7 @@ The local server defaults to port 8787 automatically in development. To override
 ## Focused verification
 
 ```sh
-npm test             # 24 focused rules/privacy/layout/session tests; normally under a second
+npm test             # 29 focused rules/privacy/layout/session/recovery tests; normally under a second
 npm run check        # TypeScript for both the frontend and Worker
 npm run build        # Production Next.js build
 ```
@@ -114,6 +114,7 @@ Create a room at the final URL, open the invitation in a second browser/profile,
 - Draws, discards, replacements, matches, penalties, and card transfers also show public card-back movements and position highlights. Each slot has a small permanent number. Opponents’ layouts face across the table (their bottom two are your top two), and extra cards extend outward without moving existing slots. Turn outlines include penalty columns.
 - New rooms use four-character alphanumeric codes, with automatic collision retries. Existing ten-character invitations and saved seats remain valid.
 - Between games, a session scoreboard tracks outright wins, shared winning ties, and cumulative points for each participant. Totals persist across rematches/reconnects in the room, including previous participants. Existing rooms begin tracking at their next completed game; past games are not reconstructed.
+- Disconnected seats and card positions remain intact and eligible to win. After 20 continuous seconds offline, the host can resolve a blocking opening peek, skip an abandoned turn (discarding any drawn card without its power), or complete an owed transfer using a randomly selected card. Reconnection resets the grace period and the server rechecks presence before recovery. Removal remains between games only.
 - The home screen offers code entry and an active-room browser. Listings show host, player count, and game number, with private locks; codes and seat tokens are never listed. Browsed joins verify the code belongs to the selected room. Active games show a disabled “Game in progress” button; joining is available before the first deal and between games. Directory updates use the existing Durable Object binding.
 - 7/8 peek at yours; 9/10 peek at another player's; Jack blind-swaps; Queen peeks at yours then optionally swaps; King peeks at yours and another player's then optionally swaps. Any two unlocked cards may be swapped. Peek targets and swap targets are independent.
 - The host can choose the Queen rule before the first deal and between games: **Look then swap** (the default) or **Swap then look**. In the latter, a blind swap reveals the card the actor receives; swapping two of your own cards lets you choose exactly one of those two to peek at, while swapping only opponents' cards grants no peek. Only the actor sees the value, with the usual public position highlight. Changing the rule clears ready checks and the setting persists across rematches. Existing rooms default to Look then swap.

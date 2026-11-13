@@ -207,6 +207,12 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .active-hand .player-identity > span { color: #f4dfa0; font-weight: 650; }
 .active-hand .player-avatar { box-shadow: 0 0 0 2px #ead290b0; }
 .locked-hand .player-identity > span { color: #f1da9a; }
+.disconnected-hand .player-identity > span { color: #f3b4ad; }
+.disconnected-hand .player-avatar { box-shadow: 0 0 0 2px #cc7773; }
+.recovery-panel { font-size: 11px; color: var(--table-muted); }
+.recovery-panel p { margin-bottom: 8px; }
+.recovery-panel .button { width: 100%; font-size: 12px; }
+.presence-notice { position: fixed; top: 78px; right: 24px; z-index: 20; max-width: 340px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 3px 16px #10231920; font-size: 12px; }
 .table-middle { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 130px; padding-top: 6px; z-index: 2; }
 .pile-area { display: flex; align-items: start; gap: 27px; }
 .pile { display: flex; flex-direction: column; align-items: center; }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import { cardLabel, rankLabel, type Action, type Card, type GameView, type Target } from '@/lib/game';
+import { cardLabel, rankLabel, DISCONNECT_GRACE_MS, type Action, type Card, type GameView, type Target } from '@/lib/game';
 import { animateMotion, animateSwap } from '@/lib/swap-animation';
 import { normalizeRoomCode, validRoomCode } from '@/lib/room-code';
 import { handColumns, handPosition } from '@/lib/table-layout';
@@ -98,6 +98,8 @@ export default function Home() {
   const [clock, setClock] = useState(Date.now());
   const [buildClock, setBuildClock] = useState(0);
   const [serverHealth, setServerHealth] = useState<'connecting' | 'connected' | 'failed'>('connecting');
+  const [presenceNotice, setPresenceNotice] = useState('');
+  const previousPresence = useRef<{ code: string; connected: string[]; players: string[]; seen: string[] } | null>(null);
   const [roomModal, setRoomModal] = useState<'join' | 'browse' | 'invite' | null>(null);
   const [listedRooms, setListedRooms] = useState<ListedRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
@@ -228,10 +230,29 @@ export default function Home() {
     return () => { disposed = true; clearTimeout(timer); clearInterval(heartbeat); document.removeEventListener('visibilitychange', refresh); current?.close(); socket.current = null; };
   }, [seat]);
   useEffect(() => {
-    if (!state?.deadline) return;
-    const timer = setInterval(() => setClock(Date.now()), 100);
+    if (!state?.deadline && !Object.keys(state?.disconnectedAt ?? {}).length) return;
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), state?.deadline ? 100 : 1000);
     return () => clearInterval(timer);
-  }, [state?.deadline]);
+  }, [state?.deadline, state?.disconnectedAt]);
+  useEffect(() => {
+    if (!state) { previousPresence.current = null; return; }
+    const previous = previousPresence.current;
+    if (previous?.code === state.code) {
+      const changes = state.players.flatMap(p => {
+        if (!previous.players.includes(p.id)) return [];
+        const was = previous.connected.includes(p.id), is = state.connectedIds.includes(p.id);
+        return was === is || (is && !previous.seen.includes(p.id)) ? [] : [`${p.name} ${is ? 'reconnected' : 'disconnected · seat saved'}`];
+      });
+      if (changes.length) setPresenceNotice(changes.join(' · '));
+    }
+    previousPresence.current = { code: state.code, connected: state.connectedIds, players: state.players.map(p => p.id), seen: [...new Set([...(previous?.code === state.code ? previous.seen : []), ...state.connectedIds])] };
+  }, [state?.connectedIds, state?.code]);
+  useEffect(() => {
+    if (!presenceNotice) return;
+    const timer = setTimeout(() => setPresenceNotice(''), 4000);
+    return () => clearTimeout(timer);
+  }, [presenceNotice]);
   useEffect(() => { setSelected(null); }, [state?.activeId, state?.phase]);
   useEffect(() => { setMatching(false); }, [state?.phase]);
   useEffect(() => { if (!state?.opportunity?.open) setMatching(false); }, [state?.opportunity?.open]);
@@ -385,6 +406,12 @@ export default function Home() {
     return { title: 'Your turn', detail: state.turns >= state.players.length * 2 && !state.calledBy ? 'Draw a card, or call Cambio before drawing.' : 'Draw a card from the deck to begin.' };
   }
   const instruction = prompt();
+  const offlinePlayers = state?.players.filter(p => p.id !== me?.id && !state.connectedIds.includes(p.id)) ?? [];
+  const blockedPlayer = state?.transfer ? state.players.find(p => p.id === state.transfer!.from)
+    : state?.phase === 'peek' ? offlinePlayers.find(p => p.initial !== 'done') : state?.phase === 'playing' ? active : undefined;
+  const recoverPlayer = blockedPlayer && offlinePlayers.some(p => p.id === blockedPlayer.id) ? blockedPlayer : undefined;
+  const offlineSince = recoverPlayer ? state?.disconnectedAt?.[recoverPlayer.id] : undefined;
+  const recoverWait = offlineSince === undefined ? null : Math.max(0, Math.ceil((offlineSince + DISCONNECT_GRACE_MS - clock - serverOffset.current) / 1000));
   const swapThenLook = state?.queenRule === 'swap-then-look';
   const queenLabel = swapThenLook ? 'Swap then look' : 'Look then swap';
   const credits = <><span>build {BUILD_SHA.slice(0, 7)} deployed {buildAge(buildClock)}</span><span aria-hidden="true">·</span><span>developed with <span className="credit-heart" aria-label="love">♥&#xfe0e;</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">shreyas jain</a></span><span aria-hidden="true">·</span><span>all rights reserved</span></>;
@@ -429,10 +456,11 @@ export default function Home() {
     const arcDepth = count <= 2 ? 80 : count <= 5 ? 180 : 210;
     const columns = handColumns(player.hand.length);
     const arcStyle = { '--hand-columns': columns, '--hand-first-column': own ? 0 : 2 - columns, ...(!own ? { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${arcPosition * 18}deg` } : {}) } as CSSProperties;
-    return <section key={player.id} style={arcStyle} className={`player-hand ${own ? 'own-hand' : 'opponent-hand'} ${isActive ? 'active-hand' : ''} ${protectedHand ? 'locked-hand' : ''}`} aria-label={`${player.name}${own ? ', your hand' : '’s hand'}${isActive ? ', current turn' : ''}`}>
+    const disconnected = !state?.connectedIds.includes(player.id);
+    return <section key={player.id} style={arcStyle} className={`player-hand ${own ? 'own-hand' : 'opponent-hand'} ${isActive ? 'active-hand' : ''} ${protectedHand ? 'locked-hand' : ''} ${disconnected ? 'disconnected-hand' : ''}`} aria-label={`${player.name}${own ? ', your hand' : '’s hand'}${isActive ? ', current turn' : ''}${disconnected ? ', disconnected' : ''}`}>
       <div className="player-heading">
         <span className={`player-avatar avatar-${seatIndex % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
-        <span className="player-identity"><strong>{player.name}{own && <small>you</small>}</strong><span>{protectedHand ? <><Icon name="lock" size={11}/> Cambio</> : isActive ? `${own ? 'Your turn' : 'Their turn'}${state?.connectedIds.includes(player.id) ? '' : ' · offline'}` : !state?.connectedIds.includes(player.id) ? 'Reconnecting' : `${player.count} ${player.count === 1 ? 'card' : 'cards'}`}</span></span>
+        <span className="player-identity"><strong>{player.name}{own && <small>you</small>}</strong><span>{disconnected ? 'Disconnected' : protectedHand ? <><Icon name="lock" size={11}/> Cambio</> : isActive ? own ? 'Your turn' : 'Their turn' : `${player.count} ${player.count === 1 ? 'card' : 'cards'}`}</span></span>
         {isActive && <span className="turn-dot" aria-label="Current turn"/>}
       </div>
       <div className={`hand-grid ${player.hand.length > 4 ? 'expanded-hand' : ''}`}>
@@ -506,6 +534,7 @@ export default function Home() {
           </div>
           <div className="your-area">{me && hand(me, true, state.players.findIndex(p => p.id === me.id))}</div>
         <section className={`action-bar ${matching && canMatch ? 'matching-mode' : ''}`} aria-label="Game actions"><div className="action-instruction" aria-live="polite"><span className="action-indicator">{transferMine ? <Icon name="arrow"/> : matching && canMatch ? '=' : state.phase === 'ending' ? countdown ?? '·' : isTurn && state.phase === 'playing' ? '→' : <Icon name="cards"/>}</span><div><h2>{instruction.title}</h2><p>{instruction.detail}</p></div></div><div className="action-controls">
+          {offlinePlayers.length > 0 && <div className="recovery-panel"><p>{offlinePlayers.map(p => p.name).join(', ')} disconnected · {offlinePlayers.length === 1 ? 'seat' : 'seats'} saved</p>{me?.id === state.hostId && recoverPlayer && <button className="button secondary" disabled={!online || pending || recoverWait !== 0} onClick={() => send({ type: 'recover-player', playerId: recoverPlayer.id })}>{recoverWait ? `Wait ${recoverWait}s` : state.phase === 'peek' ? `Continue without ${recoverPlayer.name}` : state.transfer?.from === recoverPlayer.id ? 'Complete card transfer' : `Skip ${recoverPlayer.name}’s turn`}</button>}</div>}
           {state.phase === 'peek' && me?.initialCards?.some(s => s === 'waiting') && <button className="button primary" onClick={() => send({ type: 'reveal-initial' })} disabled={pending || !online || dealing}>{me.initial === 'waiting' ? 'Look at bottom two' : 'Look at remaining card'}</button>}
           {state.phase === 'peek' && me?.initial === 'viewing' && <button className="button primary" onClick={() => send({ type: 'close-initial' })} disabled={pending || !online}>Done looking <Icon name="check"/></button>}
           {isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer && <><button className="button secondary cambio-button" title={state.turns < state.players.length * 2 ? 'Available after two complete rounds' : 'Lock your hand and give everyone one last turn'} disabled={pending || !online || !!state.calledBy || state.turns < state.players.length * 2} onClick={() => send({ type: 'cambio' })}>Call Cambio</button><button className="button primary" disabled={pending || !online} onClick={() => { setMatching(false); send({ type: 'draw' }); }}>Draw card <Icon name="arrow"/></button></>}
@@ -518,6 +547,7 @@ export default function Home() {
       </main>}
 
     {(!state || state.phase === 'lobby' || state.phase === 'finished') && <footer className="vanity-footer screen-credits">{credits}</footer>}
+    {presenceNotice && <div className="presence-notice" role="status">{presenceNotice}</div>}
     <dialog ref={roomDialog} className="rooms-dialog" aria-labelledby="room-dialog-title" onCancel={() => setRoomModal(null)} onClose={() => setRoomModal(null)} onClick={e => { if (e.target === e.currentTarget) setRoomModal(null); }}>
       <div className="dialog-heading"><h2 id="room-dialog-title">{roomModal === 'browse' ? 'Rooms' : roomModal === 'invite' ? `You’re invited to room ${code}` : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
       {roomModal === 'browse' ? <div className="room-list" aria-live="polite">

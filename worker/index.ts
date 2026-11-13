@@ -1,4 +1,4 @@
-import { addPlayer, applyAction, finishIfDue, newGame, viewFor, type Action, type Game } from '../lib/game.ts';
+import { addPlayer, applyAction, finishIfDue, newGame, syncPresence, viewFor, type Action, type Game } from '../lib/game.ts';
 import { createRoomCode, validRoomCode } from '../lib/room-code.ts';
 
 interface Env { ROOMS: DurableObjectNamespace; ALLOWED_ORIGINS: string }
@@ -148,6 +148,7 @@ export class GameRoom {
     }
   }
   private async schedule(stored: StoredRoom) {
+    syncPresence(stored.game, this.connected());
     stored.directoryId ??= crypto.randomUUID();
     await this.ctx.storage.put('room', stored);
     await this.publishListing(stored);
@@ -189,6 +190,7 @@ export class GameRoom {
           // One connection owns a seat; old tabs cannot keep issuing actions.
           for (const old of this.ctx.getWebSockets()) if (old !== ws && (old.deserializeAttachment() as Session)?.playerId === payload.playerId) old.close(4001, 'Your seat is open in another tab.');
           a.playerId = payload.playerId; ws.serializeAttachment(a);
+          syncPresence(stored.game, this.connected(), now);
           if (!this.connected().includes(stored.game.hostId)) stored.game.hostId = a.playerId!;
           await this.ctx.storage.put('room', stored);
           this.broadcast(stored); await this.schedule(stored); return;
@@ -201,6 +203,7 @@ export class GameRoom {
         if (!handled.includes(payload.id)) {
           const action = payload.action as Action;
           const connected = this.connected();
+          if (action.type === 'recover-player' && connected.includes(action.playerId)) throw new Error('That player has reconnected.');
           if (action.type === 'start' && stored.game.players.some(p => !connected.includes(p.id))) throw new Error('Wait for everyone to reconnect, or remove absent players.');
           if (action.type === 'remove' && connected.includes(action.playerId)) throw new Error('Only disconnected players can be removed.');
           if (['peek', 'swap', 'replace', 'give'].includes(action.type) && payload.version !== stored.game.version) throw new Error('The table changed. Please select the card again.');
@@ -229,6 +232,7 @@ export class GameRoom {
       const stored = await this.ctx.storage.get<StoredRoom>('room');
       if (!stored) return;
       const connected = this.connected();
+      syncPresence(stored.game, connected);
       if (!connected.includes(stored.game.hostId) && connected.length) stored.game.hostId = connected[0];
       if (stored.game.phase === 'lobby' || stored.game.phase === 'finished') for (const p of stored.game.players) if (!connected.includes(p.id)) p.ready = false;
       await this.ctx.storage.put('room', stored);

@@ -81,7 +81,7 @@ export class GameRoom {
             const entry = await request.json() as RoomListing & { connected: boolean };
             if (entry.connected) {
               const { id, hostName, players, gameNumber, phase, updatedAt } = entry;
-              await this.ctx.storage.put(`listing:${id}`, { id, hostName, players, gameNumber, phase, updatedAt, private: true });
+              await this.ctx.storage.put(`listing:${id}`, { id, hostName, players, gameNumber: Math.max(1, gameNumber ?? 1), phase, updatedAt, private: true });
             } else await this.ctx.storage.delete(`listing:${entry.id}`);
             return json({ ok: true });
           }
@@ -89,7 +89,7 @@ export class GameRoom {
           const rooms: RoomListing[] = [];
           for (const [key, entry] of entries) {
             if (Date.now() - entry.updatedAt >= DAY) await this.ctx.storage.delete(key);
-            else rooms.push(entry);
+            else { const { id, hostName, players, phase, updatedAt } = entry; rooms.push({ id, hostName, players, phase, updatedAt, private: true, gameNumber: Math.max(1, entry.gameNumber ?? 1) }); }
           }
           return json({ rooms: rooms.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100) });
         }

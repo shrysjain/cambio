@@ -2,6 +2,7 @@ export type Suit = 'clubs' | 'diamonds' | 'hearts' | 'spades' | 'joker';
 export type Card = { rank: number; suit: Suit };
 export type Target = { playerId: string; slot: number };
 export type QueenRule = 'look-then-swap' | 'swap-then-look';
+export type SessionScore = { id: string; name: string; wins: number; ties: number; points: number; games: number };
 export type SwapEvent = { id: string; actorId: string; a: Target; b: Target; at: number };
 export type CardPlace = Target | 'draw' | 'discard';
 export type CardMove = { from: CardPlace; to: CardPlace };
@@ -17,6 +18,7 @@ export type Power = {
   received?: { target: Target; card: Card }[];
 };
 export type Game = {
+  session?: { games: number; players: Record<string, SessionScore> };
   code: string; hostId: string; players: Player[];
   phase: 'lobby' | 'peek' | 'playing' | 'ending' | 'finished';
   deck: Card[]; discards: Card[]; active: number; turns: number;
@@ -145,6 +147,16 @@ export function finishIfDue(game: Game, now = Date.now()): boolean {
   game.phase = 'finished';
   const lowest = Math.min(...game.players.map(score));
   game.winners = game.players.filter(p => score(p) === lowest).map(p => p.id);
+  game.session ??= { games: 0, players: {} };
+  game.session.games++;
+  for (const player of game.players) {
+    const stats = game.session.players[player.id] ??= { id: player.id, name: player.name, wins: 0, ties: 0, points: 0, games: 0 };
+    stats.name = player.name; stats.games++; stats.points += score(player);
+    if (game.winners.includes(player.id)) {
+      if (game.winners.length === 1) stats.wins++;
+      else stats.ties++;
+    }
+  }
   for (const p of game.players) p.ready = false;
   game.flash = null;
   game.message = game.winners.map(id => playerById(game, id).name).join(' & ') + (game.winners.length > 1 ? ' tie for the win.' : ' wins.');
@@ -382,6 +394,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     lastSwap: game.lastSwap ?? null,
     motions: game.motions ?? [],
     queenRule: game.queenRule ?? 'look-then-swap',
+    session: { games: game.session?.games ?? 0, players: Object.values(game.session?.players ?? {}) },
   };
 }
 export type GameView = ReturnType<typeof viewFor> & { connectedIds: string[] };

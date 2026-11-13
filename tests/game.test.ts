@@ -5,6 +5,39 @@ import { createRoomCode, normalizeRoomCode, validRoomCode } from '../lib/room-co
 import { handColumns, handPosition } from '../lib/table-layout.ts';
 
 const card = (rank: number, suit: Card['suit'] = 'clubs'): Card => ({ rank, suit });
+test('session scores count outright wins, tied wins, signed points, and each game exactly once', () => {
+  const g = playing();
+  g.players[0].hand = [card(13, 'hearts'), null]; g.players[1].hand = [card(0, 'joker')]; g.players[2].hand = [card(3)];
+  applyAction(g, 'a', { type: 'end-game' }, 1000);
+  assert.ok(finishIfDue(g, 6000)); assert.equal(finishIfDue(g, 6001), false);
+  assert.deepEqual(g.session?.players.a, { id: 'a', name: 'Alex', wins: 1, ties: 0, points: -1, games: 1 });
+  for (const p of g.players) applyAction(g, p.id, { type: 'ready' }, 6002);
+  assert.equal(g.session?.games, 1);
+  g.players[0].hand = [card(2)]; g.players[1].hand = [card(2)]; g.players[2].hand = [card(4)];
+  applyAction(g, 'a', { type: 'end-game' }, 7000); finishIfDue(g, 12000);
+  assert.equal(g.session?.games, 2);
+  assert.deepEqual(g.session?.players.a, { id: 'a', name: 'Alex', wins: 1, ties: 1, points: 1, games: 2 });
+  assert.deepEqual(g.session?.players.b, { id: 'b', name: 'Player 2', wins: 0, ties: 1, points: 2, games: 2 });
+  assert.equal(g.session?.players.c.points, 7);
+  assert.deepEqual(viewFor(g, 'a').session, viewFor(g, 'b').session);
+  const restored = JSON.parse(JSON.stringify(g)) as Game;
+  applyAction(restored, 'a', { type: 'remove', playerId: 'c' });
+  addPlayer(restored, 'd', 'Dana');
+  assert.equal(restored.session?.players.c.points, 7);
+  assert.equal(restored.session?.players.d, undefined);
+  assert.equal(restored.session?.games, 2);
+});
+
+test('legacy rooms start session tracking at their next finish and never publish live hand totals', () => {
+  const g = playing(); delete g.session;
+  assert.deepEqual(viewFor(g, 'a').session, { games: 0, players: [] });
+  applyAction(g, 'a', { type: 'end-game' }, 1000); finishIfDue(g, 6000);
+  const totals = structuredClone(viewFor(g, 'a').session);
+  for (const p of g.players) applyAction(g, p.id, { type: 'ready' }, 6001);
+  g.players[0].hand = [card(13, 'hearts')];
+  assert.deepEqual(viewFor(g, 'b').session, totals);
+  assert.equal(viewFor(g, 'b').players[0].score, null);
+});
 test('new room codes are four characters and existing invitations stay valid', () => {
   for (let i = 0; i < 20; i++) { const code = createRoomCode(); assert.match(code, /^[A-Z0-9]{4}$/); assert.ok(validRoomCode(code)); }
   assert.equal(normalizeRoomCode(' ab-7k '), 'AB7K');

@@ -104,6 +104,18 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .invite-action { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--accent); }
 .list-heading { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .lobby-players { margin-top: 32px; }
+.queen-settings { border: 0; padding: 0; margin: 26px 0 0; min-width: 0; text-align: left; }
+.queen-settings legend { padding: 0; margin-bottom: 10px; color: var(--ink); font-size: 13px; font-weight: 600; }
+.queen-options { display: flex; padding: 3px; gap: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.queen-option { flex: 1; position: relative; text-align: center; cursor: pointer; }
+.queen-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.queen-option span { display: block; padding: 9px 10px; border-radius: 5px; font-size: 12px; font-weight: 550; color: var(--muted); }
+.queen-option input:checked + span { background: var(--accent); color: var(--surface); }
+.queen-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
+.queen-settings:disabled .queen-option { cursor: default; }
+.queen-settings p { margin: 10px 0 5px; font-size: 12px; line-height: 1.6; color: var(--ink); }
+.queen-settings small { font-size: 11px; line-height: 1.5; color: var(--muted); }
+.results .queen-settings { max-width: 430px; margin: 0 auto 25px; }
 .lobby-player { display: flex; align-items: center; gap: 12px; min-height: 68px; border-bottom: 1px solid var(--line); }
 .player-avatar { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #dce8de; color: #315b3c; font-size: 13px; font-weight: 650; flex: 0 0 auto; }
 .avatar-1 { background: #e7dfcf; color: #6a5230; }.avatar-2 { background: #dce5ef; color: #385670; }.avatar-3 { background: #e9dce7; color: #6b4562; }.avatar-4 { background: #e3dfed; color: #584775; }

@@ -29,7 +29,7 @@ The local server defaults to port 8787 automatically in development. To override
 ## Focused verification
 
 ```sh
-npm test             # 16 focused rules/privacy/layout tests; normally under a second
+npm test             # 21 focused rules/privacy/layout tests; normally under a second
 npm run check        # TypeScript for both the frontend and Worker
 npm run build        # Production Next.js build
 ```
@@ -114,6 +114,7 @@ Create a room at the final URL, open the invitation in a second browser/profile,
 - Draws, discards, replacements, matches, penalties, and card transfers also show public card-back movements and position highlights. Each slot has a small permanent number. Opponents’ layouts face across the table (their bottom two are your top two), and extra cards extend outward without moving existing slots. Turn outlines include penalty columns.
 - New rooms use four-character alphanumeric codes, with automatic collision retries. Existing ten-character invitations and saved seats remain valid.
 - 7/8 peek at yours; 9/10 peek at another player's; Jack blind-swaps; Queen peeks at yours then optionally swaps; King peeks at yours and another player's then optionally swaps. Any two unlocked cards may be swapped. Peek targets and swap targets are independent.
+- The host can choose the Queen rule before the first deal and between games: **Look then swap** (the default) or **Swap then look**. In the latter, a blind swap reveals the card the actor receives; swapping two of your own cards lets you choose exactly one of those two to peek at, while swapping only opponents' cards grants no peek. Only the actor sees the value, with the usual public position highlight. Changing the rule clears ready checks and the setting persists across rematches. Existing rooms default to Look then swap.
 - Initial and power peeks highlight the viewed position with an eye badge for everyone while it is being viewed. Only the authorized player sees the face; click again to hide it. If matching moves that card, its old reveal cannot expose the replacement card.
 - Matching works off-turn, including during a power. A correct match removes the card; matching someone else's requires giving them one of yours. A failed attempt returns the card and adds a penalty, and the player can try again. One successful match consumes that discard opportunity. The first valid server-received attempt wins; latency can affect close races.
 - A = 1, numbered cards score at face value, J = 11, Q = 12, black K = 13, red K = −1, two Jokers = 0. Lowest score wins, ties stay ties, and there is no caller penalty.

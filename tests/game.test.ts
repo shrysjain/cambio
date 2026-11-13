@@ -134,6 +134,85 @@ test('queen can peek at your card then swap two different opponents’ cards', (
   }
 });
 
+test('only the host can choose the Queen rule between games; ready checks reset and rematches retain it', () => {
+  const g = newGame('AB7K', 'a', 'Alex'); addPlayer(g, 'b', 'Blair');
+  assert.equal(viewFor(g, 'b').queenRule, 'look-then-swap');
+  delete g.queenRule; assert.equal(viewFor(g, 'a').queenRule, 'look-then-swap');
+  for (const p of g.players) applyAction(g, p.id, { type: 'ready' });
+  assert.throws(() => applyAction(g, 'b', { type: 'set-queen-rule', rule: 'swap-then-look' }), /Only the host/);
+  assert.throws(() => applyAction(g, 'a', { type: 'set-queen-rule', rule: 'bad' as never }), /valid Queen rule/);
+  applyAction(g, 'a', { type: 'set-queen-rule', rule: 'swap-then-look' });
+  assert.ok(g.players.every(p => !p.ready));
+  assert.equal(viewFor(g, 'b').queenRule, 'swap-then-look');
+  for (const p of g.players) applyAction(g, p.id, { type: 'ready' });
+  applyAction(g, 'a', { type: 'start' });
+  assert.throws(() => applyAction(g, 'a', { type: 'set-queen-rule', rule: 'look-then-swap' }), /between games/);
+  applyAction(g, 'a', { type: 'end-game' }, 1000); finishIfDue(g, 6000);
+  for (const p of g.players) applyAction(g, p.id, { type: 'ready' }, 6001);
+  assert.equal(g.phase, 'peek'); assert.equal(g.queenRule, 'swap-then-look');
+});
+
+test('swap-then-look reveals only your received card, in either swap direction, then ends the turn', () => {
+  for (const reverse of [false, true]) {
+    const g = playing(); g.queenRule = 'swap-then-look';
+    g.players[0].hand[0] = card(2); g.players[1].hand[1] = card(7, 'hearts');
+    discard(g, 12);
+    assert.equal(g.power?.step, 'swap');
+    assert.throws(() => applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 0 } }), /no card to peek/);
+    const own = { playerId: 'a', slot: 0 }, other = { playerId: 'b', slot: 1 };
+    applyAction(g, 'a', { type: 'swap', a: reverse ? other : own, b: reverse ? own : other });
+    assert.equal(g.active, 0); assert.equal(g.power?.step, 'view');
+    assert.deepEqual(viewFor(g, 'a').players[0].hand[0]?.face, card(7, 'hearts'));
+    for (const id of ['b', 'c']) {
+      assert.equal(viewFor(g, id).players[0].hand[0]?.peekedBy, 'a');
+      assert.equal(viewFor(g, id).players[0].hand[0]?.face, null);
+      assert.equal(viewFor(g, id).power, null);
+    }
+    if (reverse) applyAction(g, 'a', { type: 'close-peek' });
+    else applyAction(g, 'a', { type: 'hide-peek', target: own });
+    assert.equal(g.power, null); assert.equal(g.active, 1);
+  }
+});
+
+test('a Queen swap within your hand allows exactly one of those two cards to be peeked, without exposing both', () => {
+  const g = playing(); g.queenRule = 'swap-then-look';
+  g.players[0].hand = [card(3), card(4), card(5), card(6)]; discard(g, 12);
+  applyAction(g, 'a', { type: 'swap', a: { playerId: 'a', slot: 0 }, b: { playerId: 'a', slot: 1 } });
+  assert.equal(g.power?.step, 'received');
+  assert.deepEqual(viewFor(g, 'a').power?.received, [{ playerId: 'a', slot: 0 }, { playerId: 'a', slot: 1 }]);
+  assert.ok(viewFor(g, 'a').players[0].hand.every(c => !c?.face));
+  assert.throws(() => applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 2 } }), /cards you received/);
+  applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 1 } });
+  assert.deepEqual(viewFor(g, 'a').players[0].hand[1]?.face, card(3));
+  assert.equal(viewFor(g, 'b').players[0].hand[1]?.face, null);
+  assert.throws(() => applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 0 } }), /no card to peek/);
+  applyAction(g, 'a', { type: 'close-peek' }); assert.equal(g.power, null); assert.equal(g.active, 1);
+});
+
+test('received-card choices cannot expose a replacement introduced by a matching transfer', () => {
+  const g = playing(); g.queenRule = 'swap-then-look';
+  g.players[0].hand[0] = card(4); g.players[0].hand[1] = card(12); g.players[1].hand[0] = card(8);
+  discard(g, 12);
+  applyAction(g, 'a', { type: 'swap', a: { playerId: 'a', slot: 0 }, b: { playerId: 'a', slot: 1 } });
+  applyAction(g, 'b', { type: 'match', target: { playerId: 'a', slot: 0 }, opportunityId: g.opportunity!.id }, 1100);
+  applyAction(g, 'b', { type: 'give', slot: 0 }, 1101);
+  assert.deepEqual(viewFor(g, 'a', 1102).power?.received, [{ playerId: 'a', slot: 1 }]);
+  assert.throws(() => applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 0 } }), /may have moved/);
+  assert.equal(viewFor(g, 'a', 1102).players[0].hand[0]?.face, null);
+});
+
+test('swapping only opponents grants no Queen peek; an exhausted deck waits for the received-card peek', () => {
+  const g = playing(); g.queenRule = 'swap-then-look'; discard(g, 12);
+  applyAction(g, 'a', { type: 'swap', a: { playerId: 'b', slot: 0 }, b: { playerId: 'c', slot: 0 } });
+  assert.equal(g.power, null); assert.equal(g.active, 1);
+  const last = playing(); last.queenRule = 'swap-then-look'; last.deck = [card(12)];
+  applyAction(last, 'a', { type: 'draw' }, 1000); applyAction(last, 'a', { type: 'discard' }, 1001);
+  applyAction(last, 'a', { type: 'swap', a: { playerId: 'a', slot: 0 }, b: { playerId: 'b', slot: 0 } }, 1002);
+  assert.equal(last.phase, 'playing'); assert.equal(last.power?.step, 'view');
+  applyAction(last, 'a', { type: 'close-peek' }, 1003);
+  assert.equal(last.phase, 'ending'); assert.equal(last.deadline, 6003);
+});
+
 test('matching leaves a fixed empty slot and penalties append without moving remembered cards', () => {
   const g = playing();
   g.players[1].hand = [card(3), card(7), card(5), card(9)];

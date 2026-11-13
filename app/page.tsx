@@ -270,7 +270,7 @@ export default function Home() {
     if (!isTurn || state.phase !== 'playing') return;
     if (state.players.find(p => p.id === target.playerId)?.hand[target.slot]?.peeking) { send({ type: 'hide-peek', target }); return; }
     if (state.drawn && target.playerId === me.id) { send({ type: 'replace', target }); return; }
-    if (state.power?.step === 'own' || state.power?.step === 'other') { send({ type: 'peek', target }); return; }
+    if (state.power?.step === 'own' || state.power?.step === 'other' || state.power?.step === 'received') { send({ type: 'peek', target }); return; }
     if (state.power?.step === 'swap') {
       if (!selected) { setSelected(target); selectedVersion.current = state.version; }
       else if (same(selected, target)) setSelected(null);
@@ -288,6 +288,7 @@ export default function Home() {
     if (state.drawn) return playerId === me.id;
     if (state.power?.step === 'own') return playerId === me.id;
     if (state.power?.step === 'other') return playerId !== me.id;
+    if (state.power?.step === 'received') return state.power.received.some(t => t.playerId === playerId && t.slot === slot);
     return state.power?.step === 'swap' && playerId !== state.calledBy;
   }
   function prompt(): { title: string; detail: string } {
@@ -306,12 +307,32 @@ export default function Home() {
       const step = state.power.step;
       return step === 'own' ? { title: 'Peek at one of your cards', detail: 'Choose a card in your hand.' }
         : step === 'other' ? { title: 'Peek at another player’s card', detail: 'Choose any card in someone else’s hand, including the Cambio caller.' }
-        : step === 'view' ? { title: 'Take a look', detail: 'Click the revealed card again to hide it and continue.' }
-        : { title: selected ? 'Choose the second card' : 'Swap any two cards', detail: 'They can belong to anyone except the Cambio caller. Click a selected card to cancel.' };
+        : step === 'received' ? { title: 'Look at one swapped card', detail: state.power.received.length ? 'Choose one of the two cards you just swapped in your hand.' : 'Those cards have moved. Skip the power to finish your turn.' }
+        : step === 'view' ? { title: state.power.rank === 12 && state.queenRule === 'swap-then-look' ? 'Look at your received card' : 'Take a look', detail: 'Click the revealed card again to hide it and continue.' }
+        : { title: selected ? 'Choose the second card' : 'Swap any two cards', detail: state.power.rank === 12 && state.queenRule === 'swap-then-look' ? 'Swap blindly. If you receive a card, you’ll get to look at it afterward.' : 'They can belong to anyone except the Cambio caller. Click a selected card to cancel.' };
     }
     return { title: 'Your turn', detail: state.turns >= state.players.length * 2 && !state.calledBy ? 'Draw a card, or call Cambio before drawing.' : 'Draw a card from the deck to begin.' };
   }
   const instruction = prompt();
+  const swapThenLook = state?.queenRule === 'swap-then-look';
+  const queenLabel = swapThenLook ? 'Swap then look' : 'Look then swap';
+  const queenDescription = swapThenLook ? 'Blind swap, then look at the card you receive. If both cards were yours, choose one to look at. No peek if neither card was yours.' : 'Look at one of your cards, then optionally swap any two unlocked cards.';
+
+  function queenSettings() {
+    if (!state) return null;
+    const host = me?.id === state.hostId;
+    return <fieldset className="queen-settings" disabled={!host || !online || pending} aria-describedby="queen-rule-hint">
+      <legend>Queen power</legend>
+      <div className="queen-options">
+        {(['look-then-swap', 'swap-then-look'] as const).map(rule => <label className="queen-option" key={rule}>
+          <input type="radio" name="queen-rule" value={rule} checked={state.queenRule === rule} onChange={() => send({ type: 'set-queen-rule', rule })}/>
+          <span>{rule === 'look-then-swap' ? 'Look then swap' : 'Swap then look'}</span>
+        </label>)}
+      </div>
+      <p>{queenDescription}</p>
+      <small id="queen-rule-hint">{host ? 'Changing the rule resets everyone’s ready check.' : 'The host chooses this rule before the deal.'}</small>
+    </fieldset>;
+  }
 
   function hand(player: NonNullable<GameView['players'][number]>, own: boolean, seatIndex: number) {
     const isActive = state?.activeId === player.id && state?.phase === 'playing';
@@ -370,10 +391,11 @@ export default function Home() {
       : state.phase === 'lobby' ? <main className="lobby">
         <section className="lobby-main"><span className="eyebrow"><Icon name="lock" size={14}/> Private table</span><h1>Make room for friends.</h1><p className="muted">Share the invite, get everyone ready, and deal.</p>
           <button className="invite-box" onClick={copyInvite}><span><small>ROOM CODE</small><strong>{formatCode(state.code)}</strong></span><span className="invite-action"><Icon name={copied ? 'check' : 'copy'}/>{copied ? 'Copied link' : 'Copy invite'}</span></button>
+          {queenSettings()}
           <div className="lobby-players"><div className="list-heading"><span>At the table</span><span>{state.players.length} / 10</span></div>{state.players.map((p, i) => <div className="lobby-player" key={p.id}><span className={`player-avatar avatar-${i % 5}`}>{p.name[0].toUpperCase()}</span><span className="lobby-player-name">{p.name}{p.id === me?.id && <small>you</small>}{p.id === state.hostId && <small className="host-label">host</small>}</span><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{!state.connectedIds.includes(p.id) ? 'Disconnected' : p.ready ? <><Icon name="check" size={14}/> Ready</> : 'Not ready'}</span>{me?.id === state.hostId && p.id !== me.id && !state.connectedIds.includes(p.id) && <button className="text-button remove-player" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>
           <div className="lobby-actions"><button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> You’re ready</> : 'Ready to play'}</button>{me?.id === state.hostId && <button className="button primary" onClick={() => send({ type: 'start' })} disabled={pending || !online || state.players.length < 2 || !state.players.every(p => p.ready && state.connectedIds.includes(p.id))}>Shuffle & deal <Icon name="arrow"/></button>}</div><p className="lobby-hint">{state.players.length < 2 ? 'Invite at least one friend to start.' : state.players.every(p => p.ready) ? me?.id === state.hostId ? 'Everyone is ready. Your table is waiting.' : 'Everyone is ready. Waiting for the host to deal.' : 'Everyone needs to be ready before the first deal.'}</p>
-        </section><aside className="lobby-rules"><div className="mini-cards"><PlayingCard small/><PlayingCard small face={{ rank: 7, suit: 'spades' }}/></div><h2>The house rules</h2><p>Start with four cards.<br/>Remember your bottom two.<br/>Aim for the lowest score.</p><div className="power-cheatsheet"><span>7 / 8</span><p>Peek at your own</p><span>9 / 10</span><p>Peek at someone else’s</p><span>J</span><p>Blind swap</p><span>Q</span><p>Peek at yours, then swap</p><span>K</span><p>Peek at both, then swap</p></div><button className="text-button" onClick={() => setRules(true)}>Read all rules <Icon name="arrow" size={14}/></button></aside>
-      </main> : state.phase === 'finished' ? <main className="results"><span className="eyebrow">Game {state.gameNumber} · Final scores</span><h1>{state.winners.length > 1 ? 'A shared victory.' : `${state.players.find(p => p.id === state.winners[0])?.name} takes the table.`}</h1><p className="muted">Lowest score wins. Ready for another?</p><div className="score-table">{[...state.players].sort((a, b) => a.score! - b.score!).map(p => <div className={`score-row ${state.winners.includes(p.id) ? 'winner' : ''}`} key={p.id}><span className="score-name">{p.name}{p.id === me?.id && <small>you</small>}{state.winners.includes(p.id) && <span className="winner-label">{state.winners.length > 1 ? 'Tied winner' : 'Winner'}</span>}</span><div className="score-cards">{p.hand.filter(Boolean).map((c, i) => <PlayingCard key={i} face={c!.face} small/>)}</div><strong className="score-value">{p.score}</strong><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{p.ready ? <><Icon name="check" size={14}/> Ready</> : !state.connectedIds.includes(p.id) ? 'Disconnected' : ''}</span>{me?.id === state.hostId && p.id !== me?.id && !state.connectedIds.includes(p.id) && <button className="text-button" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div><button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online || state.players.length < 2} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> Ready for the next game</> : 'Ready for the next game'}<Icon name="arrow"/></button><p className="lobby-hint">{state.players.filter(p => p.ready).length} of {state.players.length} ready · The next game starts when everyone is ready.</p><button className="text-button" onClick={leave}>Leave table</button></main>
+        </section><aside className="lobby-rules"><div className="mini-cards"><PlayingCard small/><PlayingCard small face={{ rank: 7, suit: 'spades' }}/></div><h2>The house rules</h2><p>Start with four cards.<br/>Remember your bottom two.<br/>Aim for the lowest score.</p><div className="power-cheatsheet"><span>7 / 8</span><p>Peek at your own</p><span>9 / 10</span><p>Peek at someone else’s</p><span>J</span><p>Blind swap</p><span>Q</span><p>{queenLabel}</p><span>K</span><p>Peek at both, then swap</p></div><button className="text-button" onClick={() => setRules(true)}>Read all rules <Icon name="arrow" size={14}/></button></aside>
+      </main> : state.phase === 'finished' ? <main className="results"><span className="eyebrow">Game {state.gameNumber} · Final scores</span><h1>{state.winners.length > 1 ? 'A shared victory.' : `${state.players.find(p => p.id === state.winners[0])?.name} takes the table.`}</h1><p className="muted">Lowest score wins. Ready for another?</p><div className="score-table">{[...state.players].sort((a, b) => a.score! - b.score!).map(p => <div className={`score-row ${state.winners.includes(p.id) ? 'winner' : ''}`} key={p.id}><span className="score-name">{p.name}{p.id === me?.id && <small>you</small>}{state.winners.includes(p.id) && <span className="winner-label">{state.winners.length > 1 ? 'Tied winner' : 'Winner'}</span>}</span><div className="score-cards">{p.hand.filter(Boolean).map((c, i) => <PlayingCard key={i} face={c!.face} small/>)}</div><strong className="score-value">{p.score}</strong><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{p.ready ? <><Icon name="check" size={14}/> Ready</> : !state.connectedIds.includes(p.id) ? 'Disconnected' : ''}</span>{me?.id === state.hostId && p.id !== me?.id && !state.connectedIds.includes(p.id) && <button className="text-button" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>{queenSettings()}<button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online || state.players.length < 2} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> Ready for the next game</> : 'Ready for the next game'}<Icon name="arrow"/></button><p className="lobby-hint">{state.players.filter(p => p.ready).length} of {state.players.length} ready · The next game starts when everyone is ready.</p><button className="text-button" onClick={leave}>Leave table</button></main>
       : <main className="game-layout">
         <div className="table-toolbar"><div className="room-meta"><span className="private-label"><Icon name="lock" size={12}/> Private table</span><button className="room-code-button" onClick={copyInvite}>{formatCode(state.code)}<Icon name={copied ? 'check' : 'copy'} size={13}/></button></div><div className="game-meta"><span>Game {state.gameNumber}</span><span className="meta-dot">·</span><span>{state.phase === 'peek' ? 'Opening look' : state.phase === 'ending' ? 'Final matches' : state.calledBy ? `${state.finalTurns} final ${state.finalTurns === 1 ? 'turn' : 'turns'}` : `Round ${Math.floor(state.turns / state.players.length) + 1}`}</span></div></div>
         <div ref={boardRef} className={`card-table ${dealing ? 'dealing' : ''} ${state.players.length > 6 ? 'large-room' : ''}`}>
@@ -408,10 +430,10 @@ export default function Home() {
           {(state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!online || pending || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
         </div></section>
         </div>
-        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins</span>{me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>}</footer>
+        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span>{me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>}</footer>
       </main>}
 
     {error && <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
-    <dialog ref={dialog} className="rules-dialog" onCancel={() => setRules(false)} onClose={() => setRules(false)} onClick={event => { if (event.target === event.currentTarget) setRules(false); }}><div className="dialog-heading"><div><span className="eyebrow">Our house rules</span><h2>How to play Cambio</h2></div><button className="icon-button" aria-label="Close rules" onClick={() => setRules(false)}><Icon name="close"/></button></div>{RULE_GROUPS.map(([title, text]) => <section key={title}><h3>{title}</h3><p>{text}</p></section>)}<button className="button primary" onClick={() => setRules(false)}>Back to the table</button></dialog>
+    <dialog ref={dialog} className="rules-dialog" onCancel={() => setRules(false)} onClose={() => setRules(false)} onClick={event => { if (event.target === event.currentTarget) setRules(false); }}><div className="dialog-heading"><div><span className="eyebrow">Our house rules</span><h2>How to play Cambio</h2></div><button className="icon-button" aria-label="Close rules" onClick={() => setRules(false)}><Icon name="close"/></button></div>{RULE_GROUPS.map(([title, text]) => <section key={title}><h3>{title}</h3><p>{text.replace('Q: peek at yours, then optionally swap.', `Q: ${queenDescription}`)}</p></section>)}<button className="button primary" onClick={() => setRules(false)}>Back to the table</button></dialog>
   </div>;
 }

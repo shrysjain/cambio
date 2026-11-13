@@ -2,7 +2,8 @@ import { addPlayer, applyAction, finishIfDue, newGame, viewFor, type Action, typ
 import { createRoomCode, validRoomCode } from '../lib/room-code.ts';
 
 interface Env { ROOMS: DurableObjectNamespace; ALLOWED_ORIGINS: string }
-type StoredRoom = { game: Game; credentials: Record<string, string>; handled: Record<string, string[]> };
+type StoredRoom = { game: Game; credentials: Record<string, string>; handled: Record<string, string[]>; directoryId?: string };
+type RoomListing = { id: string; hostName: string; players: number; round: number; phase: Game['phase']; updatedAt: number; private: true };
 type Session = { playerId?: string; created: number; bucket: number; count: number };
 const DAY = 24 * 60 * 60 * 1000;
 const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -33,6 +34,9 @@ export default {
     let response: Response;
     try {
       if (url.pathname === '/health') response = json({ ok: true, service: 'cambio' });
+      else if (request.method === 'GET' && url.pathname === '/rooms') {
+        response = await env.ROOMS.get(env.ROOMS.idFromName('directory')).fetch('https://internal/directory');
+      }
       else if (request.method === 'POST' && (url.pathname === '/rooms' || (roomRoute && segments[3] === 'join'))) {
         if (Number(request.headers.get('Content-Length') ?? 0) > 2048) return json({ error: 'Request too large.' }, 413);
         const body = await request.text();
@@ -72,6 +76,23 @@ export class GameRoom {
     return this.ctx.blockConcurrencyWhile(async () => {
       try {
         const url = new URL(request.url);
+        if (url.pathname === '/directory') {
+          if (request.method === 'POST') {
+            const entry = await request.json() as RoomListing & { connected: boolean };
+            if (entry.connected) {
+              const { id, hostName, players, round, phase, updatedAt } = entry;
+              await this.ctx.storage.put(`listing:${id}`, { id, hostName, players, round, phase, updatedAt, private: true });
+            } else await this.ctx.storage.delete(`listing:${entry.id}`);
+            return json({ ok: true });
+          }
+          const entries = await this.ctx.storage.list<RoomListing>({ prefix: 'listing:' });
+          const rooms: RoomListing[] = [];
+          for (const [key, entry] of entries) {
+            if (Date.now() - entry.updatedAt >= DAY) await this.ctx.storage.delete(key);
+            else rooms.push(entry);
+          }
+          return json({ rooms: rooms.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100) });
+        }
         if (url.pathname === '/limit') {
           const now = Date.now();
           const old = await this.ctx.storage.get<{ at: number; count: number }>('rate');
@@ -86,10 +107,13 @@ export class GameRoom {
         if (url.pathname === '/create' || url.pathname === '/join') {
           if (url.pathname === '/create' && stored) return json({ error: 'Room code collision. Create another room.' }, 409);
           if (url.pathname === '/join' && !stored) return json({ error: 'That room does not exist or has expired. Check the code.' }, 404);
-          const name = nameFrom(JSON.parse(await request.text()));
+          const body = JSON.parse(await request.text());
+          if (url.pathname === '/join' && body.roomId && body.roomId !== stored?.directoryId) return json({ error: 'That code does not match the selected room.' }, 400);
+          const name = nameFrom(body);
           const playerId = crypto.randomUUID(), token = crypto.randomUUID() + crypto.randomUUID();
           if (!stored) stored = { game: newGame(url.searchParams.get('code')!, playerId, name), credentials: {}, handled: {} };
           else addPlayer(stored.game, playerId, name);
+          stored.directoryId ??= crypto.randomUUID();
           stored.credentials[playerId] = await hash(token);
           stored.game.updatedAt = Date.now();
           await this.ctx.storage.put('room', stored);
@@ -124,6 +148,9 @@ export class GameRoom {
     }
   }
   private async schedule(stored: StoredRoom) {
+    stored.directoryId ??= crypto.randomUUID();
+    await this.ctx.storage.put('room', stored);
+    await this.publishListing(stored);
     const now = Date.now(), times = [stored.game.updatedAt + DAY];
     if (stored.game.phase === 'ending' && stored.game.deadline && !stored.game.transfer) times.push(Math.max(now + 1, stored.game.deadline));
     if (stored.game.flash && stored.game.flash.until > now) times.push(stored.game.flash.until);
@@ -132,6 +159,16 @@ export class GameRoom {
       if (!a?.playerId) times.push(Math.max(now + 1, a.created + 15000));
     }
     await this.ctx.storage.setAlarm(Math.min(...times));
+  }
+  private async publishListing(stored: StoredRoom) {
+    const game = stored.game;
+    try {
+      await this.env.ROOMS.get(this.env.ROOMS.idFromName('directory')).fetch('https://internal/directory', {
+        method: 'POST', body: JSON.stringify({ id: stored.directoryId, hostName: game.players.find(p => p.id === game.hostId)?.name ?? 'Host', players: game.players.length,
+          round: game.phase === 'lobby' ? 1 : Math.max(1, Math.floor(game.turns / Math.max(1, game.players.length)) + 1), phase: game.phase,
+          updatedAt: game.updatedAt, private: true, connected: this.connected().length > 0 }),
+      });
+    } catch { /* Room play remains available if the directory is temporarily unavailable. */ }
   }
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
@@ -196,6 +233,7 @@ export class GameRoom {
       if (stored.game.phase === 'lobby' || stored.game.phase === 'finished') for (const p of stored.game.players) if (!connected.includes(p.id)) p.ready = false;
       await this.ctx.storage.put('room', stored);
       this.broadcast(stored);
+      await this.publishListing(stored);
     });
   }
   async webSocketError(ws: WebSocket): Promise<void> { await this.webSocketClose(ws, 1011, 'Reconnect to continue.'); }

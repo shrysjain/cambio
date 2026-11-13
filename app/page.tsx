@@ -8,6 +8,7 @@ import { handColumns, handPosition } from '@/lib/table-layout';
 
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
+type ListedRoom = { id: string; hostName: string; players: number; round: number; phase: string; private: boolean };
 const API = process.env.NEXT_PUBLIC_GAME_SERVER || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8787' : '');
 const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'local';
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
@@ -97,6 +98,37 @@ export default function Home() {
   const [clock, setClock] = useState(Date.now());
   const [buildClock, setBuildClock] = useState(0);
   const [serverHealth, setServerHealth] = useState<'connecting' | 'connected' | 'failed'>('connecting');
+  const [roomModal, setRoomModal] = useState<'join' | 'browse' | null>(null);
+  const [listedRooms, setListedRooms] = useState<ListedRoom[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState<ListedRoom | null>(null);
+  const [joinNeedsName, setJoinNeedsName] = useState(false);
+  const roomDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (roomModal) roomDialog.current?.showModal(); else roomDialog.current?.close();
+  }, [roomModal]);
+  useEffect(() => {
+    if (roomModal !== 'browse') return;
+    const controller = new AbortController();
+    setRoomsLoading(true); setRoomsError('');
+    async function refresh() {
+      try {
+        const response = await fetch(`${API.replace(/\/$/, '')}/rooms`, { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('Could not load rooms');
+        const data = await response.json();
+        if (!controller.signal.aborted) { setListedRooms(data.rooms); setRoomsError(''); }
+      } catch { if (!controller.signal.aborted) setRoomsError('Could not load rooms. Try again shortly.'); }
+      finally { if (!controller.signal.aborted) setRoomsLoading(false); }
+    }
+    refresh(); const timer = setInterval(refresh, 10000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [roomModal]);
+  function openJoin(room: ListedRoom | null = null) {
+    setSelectedRoom(room); setError(''); setJoinNeedsName(!name.trim());
+    if (room) setCode('');
+    setRoomModal('join');
+  }
   useEffect(() => {
     setBuildClock(Date.now());
     const timer = setInterval(() => setBuildClock(Date.now()), 60000);
@@ -264,13 +296,13 @@ export default function Home() {
     if (!API) { setError('The game server is unavailable. Please try again later.'); return; }
     setBusy(true); setError('');
     try {
-      const response = await fetch(`${API.replace(/\/$/, '')}${create ? '/rooms' : `/rooms/${clean}/join`}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }), signal: AbortSignal.timeout(10000) });
+      const response = await fetch(`${API.replace(/\/$/, '')}${create ? '/rooms' : `/rooms/${clean}/join`}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), ...(!create && selectedRoom ? { roomId: selectedRoom.id } : {}) }), signal: AbortSignal.timeout(10000) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to join. Try again.');
       const next = result as Seat;
       try { localStorage.setItem('cambio:name', name.trim()); localStorage.setItem(`cambio:seat:${next.code}`, JSON.stringify(next)); } catch {}
       window.history.replaceState({}, '', `/?room=${next.code}`);
-      knownGame.current = ''; setSeat(next);
+      knownGame.current = ''; setSeat(next); setRoomModal(null); setSelectedRoom(null);
     } catch (e) { setError(e instanceof TypeError ? 'Could not reach the game server. Try again in a moment.' : (e as Error).message); }
     finally { setBusy(false); }
   }
@@ -351,6 +383,7 @@ export default function Home() {
   const instruction = prompt();
   const swapThenLook = state?.queenRule === 'swap-then-look';
   const queenLabel = swapThenLook ? 'Swap then look' : 'Look then swap';
+  const credits = <><span>build {BUILD_SHA.slice(0, 7)} deployed {buildAge(buildClock)}</span><span aria-hidden="true">·</span><span>developed with <span className="credit-heart" aria-label="love">♥&#xfe0e;</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">shreyas jain</a></span><span aria-hidden="true">·</span><span>all rights reserved</span></>;
   const endGameButton = state && me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button end-game-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>;
   const queenDescription = swapThenLook ? 'Blind swap, then look at the card you receive. If both cards were yours, choose one to look at. No peek if neither card was yours.' : 'Look at one of your cards, then optionally swap any two unlocked cards.';
 
@@ -410,12 +443,12 @@ export default function Home() {
         <span role="status" className={`connection-status home-server-status ${serverHealth === 'failed' ? 'failed' : serverHealth === 'connecting' ? 'offline' : ''}`}><i/>{serverHealth === 'connected' ? 'Connected to server' : serverHealth === 'failed' ? 'Failed to connect' : 'Connecting to server'}</span>
         <h1>Cambio,<br/>with friends</h1>
         <p className="home-description">Create a private table or join with a room code.<br/>Remember your cards. Aim for the lowest score.</p>
-        <form className="join-form" onSubmit={e => join(false, e)}>
+        <form className="join-form" onSubmit={e => { e.preventDefault(); openJoin(); }}>
           <label htmlFor="player-name">Your name</label>
           <input id="player-name" autoComplete="nickname" maxLength={24} value={name} onChange={e => setName(e.target.value)} placeholder="What should we call you?" disabled={busy}/>
           <button className="button primary create-button" type="button" onClick={() => join(true)} disabled={busy}>{busy ? 'Taking your seat…' : 'Create a private room'}<Icon name="arrow"/></button>
           <div className="form-divider"><span>or join your friends</span></div>
-          <div className="join-row"><input aria-label="Room code" className="code-input" maxLength={12} value={formatCode(code)} onChange={e => setCode(normalizeRoomCode(e.target.value))} placeholder="AB7K" disabled={busy}/><button className="button secondary" type="submit" disabled={busy}>Join room</button></div>
+          <div className="join-row home-join-actions"><button className="button secondary" type="button" onClick={() => openJoin()} disabled={busy}>Join with code</button><button className="button secondary" type="button" onClick={() => { setError(''); setRoomModal('browse'); }} disabled={busy}>Browse rooms</button></div>
         </form>
         <p className="privacy-note"><Icon name="lock" size={13}/> Private rooms · 2–10 players · No account needed</p>
       </section>
@@ -466,10 +499,26 @@ export default function Home() {
           {(state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!online || pending || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
         </div></section>
         </div>
-        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span><span className="vanity-footer"><span>build {BUILD_SHA.slice(0, 7)} deployed {buildAge(buildClock)}</span><span aria-hidden="true">·</span><span>developed with <span className="credit-heart" aria-label="love">♥&#xfe0e;</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">shreyas jain</a></span><span aria-hidden="true">·</span><span>all rights reserved</span></span></footer>
+        <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span><span className="vanity-footer">{credits}</span></footer>
       </main>}
 
-    {error && <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
+    {(!state || state.phase === 'lobby' || state.phase === 'finished') && <footer className="vanity-footer screen-credits">{credits}</footer>}
+    <dialog ref={roomDialog} className="rooms-dialog" onCancel={() => setRoomModal(null)} onClose={() => setRoomModal(null)} onClick={e => { if (e.target === e.currentTarget) setRoomModal(null); }}>
+      <div className="dialog-heading"><h2>{roomModal === 'browse' ? 'Rooms' : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
+      {roomModal === 'browse' ? <div className="room-list" aria-live="polite">
+        {roomsLoading ? <p className="muted">Loading rooms…</p> : roomsError ? <p role="alert">{roomsError}</p> : listedRooms.length === 0 ? <p className="muted">No rooms open</p> : listedRooms.map(room => <div className="room-list-row" key={room.id}>
+          <div className="room-list-info"><strong><Icon name="lock" size={13}/><span className="sr-only">Private room · </span>{room.hostName}</strong><span>{room.players}/10 players · round {room.round}{room.phase !== 'lobby' && room.phase !== 'finished' ? ' · playing' : ''}</span></div>
+          <button className="button secondary" disabled={room.players >= 10 || (room.phase !== 'lobby' && room.phase !== 'finished')} onClick={() => openJoin(room)}>{room.players >= 10 ? 'Full' : 'Join'}</button>
+        </div>)}
+      </div> : <form className="room-code-form" onSubmit={e => join(false, e)}>
+        {selectedRoom && <p className="muted selected-room"><Icon name="lock" size={12}/> {selectedRoom.hostName}</p>}
+        {joinNeedsName && <><label htmlFor="join-name">Your name</label><input id="join-name" autoComplete="nickname" value={name} onChange={e => setName(e.target.value)} maxLength={24} required disabled={busy}/></>}
+        <label htmlFor="join-code">Room code</label><input id="join-code" autoFocus className="code-input" autoComplete="off" spellCheck={false} value={formatCode(code)} onChange={e => setCode(normalizeRoomCode(e.target.value))} maxLength={12} placeholder="AB7K" required disabled={busy}/>
+        {error && <p className="join-error" role="alert">{error}</p>}
+        <button className="button primary" type="submit" disabled={busy}>{busy ? 'Joining…' : 'Join room'}</button>
+      </form>}
+    </dialog>
+    {error && !roomModal && <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss message" onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
     <dialog ref={dialog} className="rules-dialog" onCancel={() => setRules(false)} onClose={() => setRules(false)} onClick={event => { if (event.target === event.currentTarget) setRules(false); }}><div className="dialog-heading"><div><span className="eyebrow">Our house rules</span><h2>How to play Cambio</h2></div><button className="icon-button" aria-label="Close rules" onClick={() => setRules(false)}><Icon name="close"/></button></div>{RULE_GROUPS.map(([title, text]) => <section key={title}><h3>{title}</h3><p>{text.replace('Q: peek at yours, then optionally swap.', `Q: ${queenDescription}`)}</p></section>)}<button className="button primary" onClick={() => setRules(false)}>Back to the table</button></dialog>
   </div>;
 }

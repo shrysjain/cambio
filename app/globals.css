@@ -170,7 +170,7 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .opponent-hand .playing-card.small .card-suit { font-size: 21px; }
 .opponent-hand .playing-card.small .card-corner span { font-size: 9px; }
 .active-hand .player-heading { color: #fff; }
-.active-hand::before { content: ''; position: absolute; top: -13px; bottom: -12px; left: calc(var(--hand-first-column, 0) * (var(--hand-card-width) + var(--hand-gap)) - 14px); width: calc(var(--hand-columns, 2) * var(--hand-card-width) + (var(--hand-columns, 2) - 1) * var(--hand-gap) + 28px); border: 1px solid #e4d59080; border-radius: 14px; background: #f4e9b40d; box-shadow: 0 0 24px #fff2c213; pointer-events: none; z-index: -1; }
+.active-hand::before { content: ''; position: absolute; top: -17px; bottom: -16px; left: calc(var(--hand-first-column, 0) * (var(--hand-card-width) + var(--hand-gap)) - 18px); width: calc(var(--hand-columns, 2) * var(--hand-card-width) + (var(--hand-columns, 2) - 1) * var(--hand-gap) + 36px); border: 1px solid #e4d59080; border-radius: 16px; background: #f4e9b40d; box-shadow: 0 0 24px #fff2c213; pointer-events: none; z-index: -1; }
 .active-hand .player-identity > span { color: #f4dfa0; font-weight: 650; }
 .active-hand .player-avatar { box-shadow: 0 0 0 2px #ead290b0; }
 .locked-hand .player-identity > span { color: #f1da9a; }

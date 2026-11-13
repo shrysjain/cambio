@@ -237,7 +237,7 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       game.discards.push(card); // Covers the discard without opening another opportunity.
       if (owner.id !== id) game.transfer = { from: id, to: action.target };
       recordMotion(game, id, 'match', [{ from: action.target, to: 'discard' }], now);
-      game.message = `${player.name} matched ${owner.name}’s card ${action.target.slot + 1}.`;
+      game.message = `${player.name} matched ${owner.id === id ? 'their own' : `${owner.name}’s`} card ${action.target.slot + 1}.`;
     }
   } else if (action.type === 'give') {
     ensure(game.transfer?.from === id, 'There is no card for you to give.');

@@ -237,6 +237,18 @@ test('matching leaves a fixed empty slot and penalties append without moving rem
   assert.equal(view.length, 6); assert.equal(view[1], null);
 });
 
+test('match messages name the matcher and the matched owner without duplicating the matcher name', () => {
+  const g = playing();
+  g.players[0].hand[1] = card(7); g.players[1].hand[2] = card(7);
+  discard(g, 7);
+  const opportunityId = g.opportunity!.id;
+  applyAction(g, 'a', { type: 'match', target: { playerId: 'b', slot: 2 }, opportunityId });
+  assert.equal(g.message, 'Alex matched Player 2’s card 3.');
+  const self = playing(); self.players[0].hand[1] = card(7); discard(self, 7);
+  applyAction(self, 'a', { type: 'match', target: { playerId: 'a', slot: 1 }, opportunityId: self.opportunity!.id });
+  assert.equal(self.message, 'Alex matched their own card 2.');
+});
+
 test('king peeks can be flipped back individually without losing the other peek or leaking faces', () => {
   const g = playing(); discard(g, 13);
   applyAction(g, 'a', { type: 'peek', target: { playerId: 'a', slot: 0 } });

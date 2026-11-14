@@ -18,8 +18,8 @@ export function handViewport(slots: number, cardWidth: number, gap: number, cap:
 /** Seat geometry depends on the table, never on changing hand sizes. */
 export function tableLayout(opponents: number, width: number, height: number) {
   const crowded = opponents >= 6;
-  const cardWidth = crowded ? 36 : 44, cardHeight = crowded ? 50 : 60;
-  const ownWidth = height < 700 || crowded ? 50 : 66, ownHeight = ownWidth === 50 ? 68 : 90;
+  const cardWidth = crowded ? 40 : 48, cardHeight = crowded ? 55 : 66;
+  const ownWidth = height < 700 || crowded ? 55 : 72, ownHeight = ownWidth === 55 ? 75 : 98;
   const actionWidth = Math.min(320, width / 2 - 130);
   const ownCap = crowded ? Math.min(320, width * .32) : Math.min(380, width - 32 - actionWidth - 20 - (width / 2 - (ownWidth * 2 + 8) / 2));
   const seats = Array.from({ length: opponents }, (_, i) => {

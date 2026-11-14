@@ -24,10 +24,12 @@ function animateMoves(board: HTMLElement, moves: CardMove[], swapping: boolean):
   const duration = swapping ? 600 : 420;
   const pose = (card: HTMLElement) => {
     const rect = card.getBoundingClientRect();
-    const transform = getComputedStyle(card.parentElement!).transform;
+    const transform = getComputedStyle(card.closest('.hand-frame') ?? card.parentElement!).transform;
     const matrix = transform === 'none' ? null : new DOMMatrixReadOnly(transform);
+    const viewport = card.closest('.hand-scroll')?.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
     return {
-      x: rect.left + rect.width / 2, y: rect.top + rect.height / 2,
+      x: viewport ? Math.max(viewport.left + 5, Math.min(viewport.right - 5, centerX)) : centerX, y: rect.top + rect.height / 2,
       width: card.offsetWidth, height: card.offsetHeight,
       angle: matrix ? Math.atan2(matrix.b, matrix.a) * 180 / Math.PI : 0,
     };

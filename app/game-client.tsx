@@ -1,14 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { cardLabel, rankLabel, DISCONNECT_GRACE_MS, type Action, type Card, type GameView, type Target } from '@/lib/game';
 import { animateMotion, animateSwap } from '@/lib/swap-animation';
 import { normalizeRoomCode, validRoomCode } from '@/lib/room-code';
-import { handColumns, handPosition } from '@/lib/table-layout';
+import { handColumns, handPosition, handViewport, tableLayout, resultTitle, turnTitle, matchActivity } from '@/lib/table-layout';
 
 type Seat = { code: string; playerId: string; token: string };
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 type ListedRoom = { id: string; hostName: string; players: number; gameNumber: number; phase: string; private: boolean };
+
+function HandFrame({ slots, cardWidth, gap, cap, own, children }: { slots: number; cardWidth: number; gap: number; cap: number; own: boolean; children: ReactNode }) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const distanceFromRight = useRef(0);
+  const box = handViewport(slots, cardWidth, gap, cap, !own);
+  useLayoutEffect(() => {
+    const node = scroll.current;
+    if (node && !own) node.scrollLeft = Math.max(0, node.scrollWidth - node.clientWidth - distanceFromRight.current);
+  }, [box.total, box.visible, own]);
+  return <div className="hand-frame" style={{ width: box.visible + 20, marginLeft: box.left - 10, transformOrigin: `${box.origin}px center` }}>
+    <div className="hand-scroll" ref={scroll} tabIndex={box.total > box.visible ? 0 : undefined} aria-label={box.total > box.visible ? 'Cards — scroll horizontally for more positions' : undefined} onScroll={e => { const n = e.currentTarget; distanceFromRight.current = n.scrollWidth - n.clientWidth - n.scrollLeft; }}>
+      <div className="hand-grid" style={{ width: box.total, '--canvas-offset': `${box.canvas}px` } as CSSProperties}>{children}</div>
+    </div>
+    {box.total > box.visible && <span className="hand-scroll-hint">↔ scroll for more</span>}
+  </div>;
+}
 const API = process.env.NEXT_PUBLIC_GAME_SERVER || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8787' : '');
 const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'local';
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
@@ -161,6 +177,14 @@ export default function Home() {
   const knownGame = useRef<string>('');
   const dialog = useRef<HTMLDialogElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+  const [boardSize, setBoardSize] = useState({ width: 1000, height: 640 });
+  useLayoutEffect(() => {
+    const board = boardRef.current;
+    if (!board) return;
+    const measure = () => setBoardSize(previous => previous.width === board.clientWidth && previous.height === board.clientHeight ? previous : { width: board.clientWidth, height: board.clientHeight });
+    measure(); const observer = new ResizeObserver(measure); observer.observe(board);
+    return () => observer.disconnect();
+  }, [state?.code, !!state && state.phase !== 'lobby' && state.phase !== 'finished']);
   const seenSwap = useRef<{ game: string; id: string | null } | null>(null);
   const seenMotions = useRef<{ game: string; ids: Set<string> }>({ game: '', ids: new Set() });
   const motionCleanups = useRef(new Map<string, () => void>());
@@ -230,11 +254,11 @@ export default function Home() {
     return () => { disposed = true; clearTimeout(timer); clearInterval(heartbeat); document.removeEventListener('visibilitychange', refresh); current?.close(); socket.current = null; };
   }, [seat]);
   useEffect(() => {
-    if (!state?.deadline && !Object.keys(state?.disconnectedAt ?? {}).length) return;
+    if (!state?.deadline && !Object.keys(state?.disconnectedAt ?? {}).length && !state?.motions?.length) return;
     setClock(Date.now());
     const timer = setInterval(() => setClock(Date.now()), state?.deadline ? 100 : 1000);
     return () => clearInterval(timer);
-  }, [state?.deadline, state?.disconnectedAt]);
+  }, [state?.deadline, state?.disconnectedAt, !!state?.motions?.length]);
   useEffect(() => {
     if (!state) { previousPresence.current = null; return; }
     const previous = previousPresence.current;
@@ -406,6 +430,12 @@ export default function Home() {
     return { title: 'Your turn', detail: state.turns >= state.players.length * 2 && !state.calledBy ? 'Draw a card, or call Cambio before drawing.' : 'Draw a card from the deck to begin.' };
   }
   const instruction = prompt();
+  useEffect(() => {
+    document.title = turnTitle(state?.phase, state?.activeId, seat?.playerId, online);
+    return () => { document.title = 'Cambio'; };
+  }, [state?.phase, state?.activeId, seat?.playerId, online]);
+  const layout = tableLayout(Math.max(0, (state?.players.length ?? 1) - 1), boardSize.width, boardSize.height);
+  const recentMatches = (state?.motions ?? []).filter(e => clock + serverOffset.current - e.at < 6500).map(e => ({ id: e.id, label: matchActivity(e, state?.players ?? []) })).filter(e => e.label).slice(-2);
   const offlinePlayers = state?.players.filter(p => p.id !== me?.id && !state.connectedIds.includes(p.id)) ?? [];
   const blockedPlayer = state?.transfer ? state.players.find(p => p.id === state.transfer!.from)
     : state?.phase === 'peek' ? offlinePlayers.find(p => p.initial !== 'done') : state?.phase === 'playing' ? active : undefined;
@@ -450,20 +480,19 @@ export default function Home() {
     const protectedHand = state?.calledBy === player.id;
     const opponents = state!.players.filter(p => p.id !== me?.id);
     const arcIndex = opponents.findIndex(p => p.id === player.id);
-    const count = opponents.length;
-    const arcPosition = count <= 1 ? 0 : arcIndex * 2 / (count - 1) - 1;
-    const arcWidth = count === 2 ? 30 : count === 3 ? 38 : 42;
-    const arcDepth = count <= 2 ? 80 : count <= 5 ? 180 : 210;
+    const seat = layout.seats[arcIndex];
+    const cardWidth = own ? layout.ownWidth : layout.cardWidth, cardHeight = own ? layout.ownHeight : layout.cardHeight;
+    const cap = own ? layout.ownCap : seat?.cap ?? 130;
     const columns = handColumns(player.hand.length);
-    const arcStyle = { '--hand-columns': columns, '--hand-first-column': own ? 0 : 2 - columns, ...(!own ? { left: `${50 + arcWidth * arcPosition}%`, top: `${arcDepth * Math.pow(Math.abs(arcPosition), 1.7)}px`, '--hand-tilt': `${arcPosition * 18}deg` } : {}) } as CSSProperties;
+    const arcStyle = { '--hand-columns': columns, '--hand-card-width': `${cardWidth}px`, '--hand-card-height': `${cardHeight}px`, '--hand-header-width': `${Math.min(180, cap + 20)}px`, ...(!own && seat ? { left: seat.x, top: seat.y, '--hand-tilt': `${seat.tilt}deg` } : {}) } as CSSProperties;
     const disconnected = !state?.connectedIds.includes(player.id);
     return <section key={player.id} style={arcStyle} className={`player-hand ${own ? 'own-hand' : 'opponent-hand'} ${isActive ? 'active-hand' : ''} ${protectedHand ? 'locked-hand' : ''} ${disconnected ? 'disconnected-hand' : ''}`} aria-label={`${player.name}${own ? ', your hand' : '’s hand'}${isActive ? ', current turn' : ''}${disconnected ? ', disconnected' : ''}`}>
       <div className="player-heading">
         <span className={`player-avatar avatar-${seatIndex % 5}`}>{player.name.slice(0, 1).toUpperCase()}</span>
-        <span className="player-identity"><strong>{player.name}{own && <small>you</small>}</strong><span>{disconnected ? 'Disconnected' : protectedHand ? <><Icon name="lock" size={11}/> Cambio</> : isActive ? own ? 'Your turn' : 'Their turn' : `${player.count} ${player.count === 1 ? 'card' : 'cards'}`}</span></span>
+        <span className="player-identity"><strong title={player.name}>{player.name}{own && <small>you</small>}</strong><span>{disconnected ? 'Disconnected' : protectedHand ? <><Icon name="lock" size={11}/> Cambio</> : isActive ? own ? 'Your turn' : 'Their turn' : `${player.count} ${player.count === 1 ? 'card' : 'cards'}`}</span></span>
         {isActive && <span className="turn-dot" aria-label="Current turn"/>}
       </div>
-      <div className={`hand-grid ${player.hand.length > 4 ? 'expanded-hand' : ''}`}>
+      <HandFrame slots={player.hand.length} cardWidth={cardWidth} gap={own ? 8 : 7} cap={cap} own={own}>
         {player.hand.map((slot, index) => {
           const target = { playerId: player.id, slot: index };
           const face = online || state?.phase === 'finished' ? slot?.face : null;
@@ -471,7 +500,7 @@ export default function Home() {
           return <PlayingCard key={index} slotKey={`${player.id}:${index}`} face={face} empty={!slot} small={!own} opposite={!own} onClick={() => selectCard(target)} disabled={!selectable(player.id, index)} selected={same(selected, target)} highlight={!!slot && selectable(player.id, index)} peekedBy={peekedBy} position={index} index={seatIndex * 3 + index} label={!slot ? `Empty card position ${index + 1}` : `${own ? 'Your' : player.name + '’s'} card ${index + 1}, ${face ? cardLabel(face) : 'face down'}`}/>;
         })}
         {player.count === 0 && <span className="empty-hand-note">No cards · still in play</span>}
-      </div>
+      </HandFrame>
     </section>;
   }
 
@@ -507,10 +536,10 @@ export default function Home() {
           <div className="lobby-players"><div className="list-heading"><span>At the table</span><span>{state.players.length} / 10</span></div>{state.players.map((p, i) => <div className="lobby-player" key={p.id}><span className={`player-avatar avatar-${i % 5}`}>{p.name[0].toUpperCase()}</span><span className="lobby-player-name">{p.name}{p.id === me?.id && <small>you</small>}{p.id === state.hostId && <small className="host-label">host</small>}</span><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{!state.connectedIds.includes(p.id) ? 'Disconnected' : p.ready ? <><Icon name="check" size={14}/> Ready</> : 'Not ready'}</span>{me?.id === state.hostId && p.id !== me.id && !state.connectedIds.includes(p.id) && <button className="text-button remove-player" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>
           <div className="lobby-actions"><button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> You’re ready</> : 'Ready to play'}</button>{me?.id === state.hostId && <button className="button primary" onClick={() => send({ type: 'start' })} disabled={pending || !online || state.players.length < 2 || !state.players.every(p => p.ready && state.connectedIds.includes(p.id))}>Shuffle & deal <Icon name="arrow"/></button>}</div><p className="lobby-hint">{state.players.length < 2 ? 'Invite at least one friend to start.' : state.players.every(p => p.ready) ? me?.id === state.hostId ? 'Everyone is ready. Your table is waiting.' : 'Everyone is ready. Waiting for the host to deal.' : 'Everyone needs to be ready before the first deal.'}</p>
         </section><aside className="lobby-rules"><div className="mini-cards"><PlayingCard small/><PlayingCard small face={{ rank: 7, suit: 'spades' }}/></div><h2>The house rules</h2><p>Start with four cards.<br/>Remember your bottom two.<br/>Aim for the lowest score.</p><div className="power-cheatsheet"><span>7 / 8</span><p>Peek at your own</p><span>9 / 10</span><p>Peek at someone else’s</p><span>J</span><p>Blind swap</p><span>Q</span><p>{queenLabel}</p><span>K</span><p>Peek at both, then swap</p></div><button className="text-button" onClick={() => setRules(true)}>Read all rules <Icon name="arrow" size={14}/></button></aside>
-      </main> : state.phase === 'finished' ? <main className="results"><span className="eyebrow">Game {state.gameNumber} · Final scores</span><h1>{state.winners.length > 1 ? 'A shared victory.' : `${state.players.find(p => p.id === state.winners[0])?.name} takes the table.`}</h1><p className="muted">Lowest score wins. Ready for another?</p><div className="score-table">{[...state.players].sort((a, b) => a.score! - b.score!).map(p => <div className={`score-row ${state.winners.includes(p.id) ? 'winner' : ''}`} key={p.id}><span className="score-name">{p.name}{p.id === me?.id && <small>you</small>}{state.winners.includes(p.id) && <span className="winner-label">{state.winners.length > 1 ? 'Tied winner' : 'Winner'}</span>}</span><div className="score-cards">{p.hand.filter(Boolean).map((c, i) => <PlayingCard key={i} face={c!.face} small/>)}</div><strong className="score-value">{p.score}</strong><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{p.ready ? <><Icon name="check" size={14}/> Ready</> : !state.connectedIds.includes(p.id) ? 'Disconnected' : ''}</span>{me?.id === state.hostId && p.id !== me?.id && !state.connectedIds.includes(p.id) && <button className="text-button" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>{sessionScoreboard()}{queenSettings()}<button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online || state.players.length < 2} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> Ready for the next game</> : 'Ready for the next game'}<Icon name="arrow"/></button><p className="lobby-hint">{state.players.filter(p => p.ready).length} of {state.players.length} ready · The next game starts when everyone is ready.</p><button className="text-button" onClick={leave}>Leave table</button></main>
+      </main> : state.phase === 'finished' ? <main className="results"><span className="eyebrow">Game {state.gameNumber} · Final scores</span><h1>{resultTitle(state.winners, [...(state.resultWinners ?? []), ...state.players, ...(state.session?.players ?? [])])}</h1><p className="muted">Lowest score wins. Ready for another?</p><div className="score-table">{[...state.players].sort((a, b) => a.score! - b.score!).map(p => <div className={`score-row ${state.winners.includes(p.id) ? 'winner' : ''}`} key={p.id}><span className="score-name">{p.name}{p.id === me?.id && <small>you</small>}{state.winners.includes(p.id) && <span className="winner-label">{state.winners.length > 1 ? 'Tied winner' : 'Winner'}</span>}</span><div className="score-cards">{p.hand.filter(Boolean).map((c, i) => <PlayingCard key={i} face={c!.face} small/>)}</div><strong className="score-value">{p.score}</strong><span className={`ready-status ${p.ready ? 'is-ready' : ''}`}>{p.ready ? <><Icon name="check" size={14}/> Ready</> : !state.connectedIds.includes(p.id) ? 'Disconnected' : ''}</span>{me?.id === state.hostId && p.id !== me?.id && !state.connectedIds.includes(p.id) && <button className="text-button" onClick={() => send({ type: 'remove', playerId: p.id })}>Remove</button>}</div>)}</div>{sessionScoreboard()}{queenSettings()}<button className={`button ${me?.ready ? 'secondary' : 'primary'}`} disabled={pending || !online || state.players.length < 2} onClick={() => send({ type: 'ready' })}>{me?.ready ? <><Icon name="check"/> Ready for the next game</> : 'Ready for the next game'}<Icon name="arrow"/></button><p className="lobby-hint">{state.players.filter(p => p.ready).length} of {state.players.length} ready · The next game starts when everyone is ready.</p><button className="text-button" onClick={leave}>Leave table</button></main>
       : <main className="game-layout">
         <div className="table-toolbar"><div className="room-meta"><span className="private-label"><Icon name="lock" size={12}/> Private table</span><button className="room-code-button" onClick={copyInvite}>{formatCode(state.code)}<Icon name={copied ? 'check' : 'copy'} size={13}/></button></div><div className="game-meta"><span>Game {state.gameNumber}</span><span className="meta-dot">·</span><span>{state.phase === 'peek' ? 'Opening look' : state.phase === 'ending' ? 'Final matches' : state.calledBy ? `${state.finalTurns} final ${state.finalTurns === 1 ? 'turn' : 'turns'}` : `Round ${Math.floor(state.turns / state.players.length) + 1}`}</span>{endGameButton}</div></div>
-        <div ref={boardRef} className={`card-table ${dealing ? 'dealing' : ''} ${state.players.length > 6 ? 'large-room' : ''}`}>
+        <div ref={boardRef} className={`card-table ${dealing ? 'dealing' : ''} ${layout.crowded ? 'crowded-table' : ''}`}>
           <div className={`opponents opponents-${Math.min(state.players.length - 1, 5)}`}>{state.players.filter(p => p.id !== me?.id).map((p, i) => hand(p, false, i))}</div>
           <div className="table-middle">
             <div className="pile-area">
@@ -530,7 +559,7 @@ export default function Home() {
                 <span className="pile-label">Discard</span>
               </div>
             </div>
-            <div className="table-message" aria-live="polite">{dealing ? <span className="shuffle-indicator"><Icon name="cards" size={16}/> Shuffling & dealing</span> : state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}<span>{state.message}</span></>}</div>
+            <div className="table-message" aria-live="polite">{dealing ? <span className="shuffle-indicator"><Icon name="cards" size={16}/> Shuffling & dealing</span> : state.phase !== 'peek' && <>{state.calledBy && <span className="cambio-badge"><Icon name="lock" size={12}/>{state.players.find(p => p.id === state.calledBy)?.name} called Cambio</span>}{recentMatches.length ? <div className="recent-actions">{recentMatches.map(event => <span key={event.id} title={event.label ?? undefined}>{event.label}</span>)}</div> : <span>{state.message}</span>}</>}</div>
           </div>
           <div className="your-area">{me && hand(me, true, state.players.findIndex(p => p.id === me.id))}</div>
         <section className={`action-bar ${matching && canMatch ? 'matching-mode' : ''}`} aria-label="Game actions"><div className="action-instruction" aria-live="polite"><span className="action-indicator">{transferMine ? <Icon name="arrow"/> : matching && canMatch ? '=' : state.phase === 'ending' ? countdown ?? '·' : isTurn && state.phase === 'playing' ? '→' : <Icon name="cards"/>}</span><div><h2>{instruction.title}</h2><p>{instruction.detail}</p></div></div><div className="action-controls">

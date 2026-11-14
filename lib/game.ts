@@ -18,6 +18,7 @@ export type Power = {
   received?: { target: Target; card: Card }[];
 };
 export type Game = {
+  resultWinners?: { id: string; name: string }[];
   disconnectedAt?: Record<string, number>;
   session?: { games: number; players: Record<string, SessionScore> };
   code: string; hostId: string; players: Player[];
@@ -105,7 +106,7 @@ function begin(game: Game): void {
   game.drawn = null; game.power = null; game.turnComplete = false;
   game.opportunity = null; game.transfer = null; game.calledBy = null;
   game.finalTurns = null; game.exhausted = false; game.deadline = null;
-  game.winners = []; game.flash = null; game.lastSwap = null; game.motions = []; game.gameNumber++;
+  game.winners = []; game.resultWinners = []; game.flash = null; game.lastSwap = null; game.motions = []; game.gameNumber++;
   game.message = 'Look at your bottom two cards. Hide them when you are ready.';
 }
 function publishDiscard(game: Game, card: Card): void {
@@ -149,6 +150,7 @@ export function finishIfDue(game: Game, now = Date.now()): boolean {
   game.phase = 'finished';
   const lowest = Math.min(...game.players.map(score));
   game.winners = game.players.filter(p => score(p) === lowest).map(p => p.id);
+  game.resultWinners = game.players.filter(p => game.winners.includes(p.id)).map(p => ({ id: p.id, name: p.name }));
   game.session ??= { games: 0, players: {} };
   game.session.games++;
   for (const player of game.players) {
@@ -417,6 +419,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     opportunity: game.opportunity, calledBy: game.calledBy,
     finalTurns: game.finalTurns, deadline: game.deadline,
     winners: game.winners, message: game.message,
+    resultWinners: game.resultWinners?.length ? game.resultWinners : game.winners.map(id => ({ id, name: game.players.find(p => p.id === id)?.name ?? game.session?.players[id]?.name ?? 'The winner' })),
     drawn: isActive ? game.drawn : null, hasDrawn: !!game.drawn,
     power: power ? { rank: power.rank, step: power.step, reveals: power.reveals,
       received: (power.received ?? []).filter(r => {

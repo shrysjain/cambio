@@ -5,6 +5,16 @@ import { createRoomCode, normalizeRoomCode, validRoomCode } from '../lib/room-co
 import { handColumns, handPosition } from '../lib/table-layout.ts';
 
 const card = (rank: number, suit: Card['suit'] = 'clubs'): Card => ({ rank, suit });
+test('finished winner names survive seat removal, persistence, and legacy-room fallback', () => {
+  const g = playing(); g.players[1].hand = [card(13, 'hearts')]; g.players[0].hand = [card(3)]; g.players[2].hand = [card(4)];
+  applyAction(g, 'a', { type: 'end-game' }, 1000); finishIfDue(g, 6000);
+  applyAction(g, 'a', { type: 'remove', playerId: 'b' });
+  assert.deepEqual(viewFor(g, 'a').resultWinners, [{ id: 'b', name: 'Player 2' }]);
+  const restored = JSON.parse(JSON.stringify(g)) as Game;
+  assert.deepEqual(viewFor(restored, 'a').resultWinners, [{ id: 'b', name: 'Player 2' }]);
+  delete restored.resultWinners;
+  assert.deepEqual(viewFor(restored, 'a').resultWinners, [{ id: 'b', name: 'Player 2' }]);
+});
 test('recovery requires the host and 20 continuous offline seconds; hands and win eligibility survive', () => {
   const g = playing(); g.active = 1;
   g.players[0].hand = [card(8)]; g.players[1].hand = [card(13, 'hearts'), null]; g.players[2].hand = [card(9)];

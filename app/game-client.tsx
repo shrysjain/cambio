@@ -96,7 +96,7 @@ const RULE_GROUPS = [
   ['Your turn', 'Draw from the deck. Replace one of your cards, or discard the drawn card and optionally use its power. Replaced cards never activate powers.'],
   ['Powers', '7/8: peek at your card. 9/10: peek at someone else’s. J: blind swap. Q: peek at yours, then optionally swap. K: peek at yours and someone else’s, then optionally swap. Swap any two unlocked cards; they do not have to be the cards you viewed.'],
   ['Matching', 'On any turn, match a card to the discard by rank. First valid match wins. Match someone else’s card and give them one of yours. A wrong match goes back and you draw a penalty; you can try again. You do not need to wait for a power to finish.'],
-  ['Cambio & the end', 'After two complete rounds, call Cambio at the start of your turn, before drawing. Your hand locks against swaps and matches; everyone else gets one final turn. Peeking at the caller is allowed. An empty hand stays in play. When the deck empties, finish in-progress play, then allow five seconds for matching before scoring.'],
+  ['Cambio & the end', 'After two complete rounds, call Cambio at the start of your turn, before drawing. Your hand locks against swaps and matches; everyone else gets one final turn. Peeking at the caller is allowed. An empty hand stays in play. If the host enables reshuffling, an empty draw pile refills from the shuffled discards, leaving the top card in place. Otherwise, or if no cards can be recycled, finish in-progress play, then allow five seconds for matching before scoring.'],
 ];
 
 export default function Home() {
@@ -284,12 +284,14 @@ export default function Home() {
     document.addEventListener('visibilitychange', refresh);
     return () => { disposed = true; clearTimeout(timer); clearTimeout(authTimer); clearTimeout(pongTimer); clearInterval(heartbeat); document.removeEventListener('visibilitychange', refresh); current?.close(); socket.current = null; };
   }, [seat, transport]);
+  const serverNow = Math.max(clock + serverOffset.current, state?.serverTime ?? 0);
+  const reshuffling = (state?.reshuffleUntil ?? 0) > serverNow;
   useEffect(() => {
-    if (!state?.deadline && !Object.keys(state?.disconnectedAt ?? {}).length && !state?.motions?.length) return;
+    if (!reshuffling && !state?.deadline && !Object.keys(state?.disconnectedAt ?? {}).length && !state?.motions?.length) return;
     setClock(Date.now());
-    const timer = setInterval(() => setClock(Date.now()), state?.deadline ? 100 : 1000);
+    const timer = setInterval(() => setClock(Date.now()), reshuffling || state?.deadline ? 100 : 1000);
     return () => clearInterval(timer);
-  }, [state?.deadline, state?.disconnectedAt, !!state?.motions?.length]);
+  }, [reshuffling, state?.deadline, state?.disconnectedAt, !!state?.motions?.length]);
   useEffect(() => {
     if (!state) { previousPresence.current = null; return; }
     const previous = previousPresence.current;
@@ -362,7 +364,8 @@ export default function Home() {
     function keys(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || rules) return;
       if (event.key === 'Escape') { setMatching(false); setSelected(null); }
-      if (event.key.toLowerCase() === 'm' && latest.current && latest.current.yourRole !== 'spectator' && ['playing', 'ending'].includes(latest.current.phase)) { setMatching(m => !m); setSelected(null); }
+      const game = latest.current;
+      if (event.key.toLowerCase() === 'm' && game && (game.reshuffleUntil ?? 0) <= Date.now() + serverOffset.current && game.yourRole !== 'spectator' && ['playing', 'ending'].includes(game.phase)) { setMatching(m => !m); setSelected(null); }
     }
     window.addEventListener('keydown', keys);
     return () => window.removeEventListener('keydown', keys);
@@ -404,17 +407,19 @@ export default function Home() {
   const active = state?.players.find(p => p.id === state.activeId);
   const isTurn = !!state && state.activeId === me?.id;
   const online = connection === 'connected';
+  const canAct = online && !pending && !reshuffling;
+  const drawCount = reshuffling ? 0 : state?.deckCount ?? 0;
   const locked = me?.id === state?.calledBy;
   const countdown = state?.deadline ? Math.max(0, Math.ceil((state.deadline - clock - serverOffset.current) / 1000)) : null;
-  const canMatch = !!state && !!me && !locked && !state.transfer && state.opportunity?.open && (state.phase === 'playing' || (state.phase === 'ending' && (countdown ?? 0) > 0));
+  const canMatch = !!state && !!me && !reshuffling && !locked && !state.transfer && state.opportunity?.open && (state.phase === 'playing' || (state.phase === 'ending' && (countdown ?? 0) > 0));
   const transferMine = !!state?.transfer && state.transfer.from === me?.id;
-  const canDiscardDrawn = !!state && isTurn && state.phase === 'playing' && !!state.drawn && !state.transfer && online && !pending;
+  const canDiscardDrawn = !!state && isTurn && state.phase === 'playing' && !!state.drawn && !state.transfer && canAct;
   function discardDrawn() {
     if (!canDiscardDrawn) return;
     setMatching(false); setSelected(null); send({ type: 'discard' });
   }
   function selectCard(target: Target) {
-    if (!state || !me || pending || !online) return;
+    if (!state || !me || !canAct) return;
     if (state.phase === 'peek' && target.playerId === me.id) { send({ type: 'flip-initial', slot: target.slot }); return; }
     if (transferMine) { if (target.playerId === me.id) send({ type: 'give', slot: target.slot }); return; }
     if (matching && canMatch) { send({ type: 'match', target, opportunityId: state.opportunity!.id }); return; }
@@ -429,7 +434,7 @@ export default function Home() {
     }
   }
   function selectable(playerId: string, slot: number): boolean {
-    if (!state || !me || pending || !online) return false;
+    if (!state || !me || !canAct) return false;
     if (state.phase === 'peek') return playerId === me.id && (slot === 2 || slot === 3) && me.initialCards?.[slot - 2] !== 'done';
     if (state.transfer?.to.playerId === playerId && state.transfer.to.slot === slot) return false;
     if (transferMine) return playerId === me.id;
@@ -481,7 +486,7 @@ export default function Home() {
   const swapThenLook = state?.queenRule === 'swap-then-look';
   const queenLabel = swapThenLook ? 'Swap then look' : 'Look then swap';
   const credits = <><span>build {BUILD_SHA.slice(0, 7)} deployed {buildAge(buildClock)}</span><span aria-hidden="true">·</span><span>developed with <span className="credit-heart" aria-label="love">♥&#xfe0e;</span> by <a href="https://shrysjain.me" target="_blank" rel="noreferrer">shreyas jain</a></span><span aria-hidden="true">·</span><span>all rights reserved</span></>;
-  const endGameButton = state && me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button end-game-button" onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>;
+  const endGameButton = state && me?.id === state.hostId && state.phase !== 'ending' && <button className="text-button end-game-button" disabled={reshuffling} onClick={() => { if (window.confirm('End this game for everyone? The table will score after a final matching window.')) send({ type: 'end-game' }); }}>End game</button>;
   const queenDescription = swapThenLook ? 'Blind swap, then look at the card you receive. If both cards were yours, choose one to look at. No peek if neither card was yours.' : 'Look at one of your cards, then optionally swap any two unlocked cards.';
 
   function roomSettings() {
@@ -495,6 +500,14 @@ export default function Home() {
           <span>{decks === 1 ? '1 deck' : '2 decks'}</span>
         </label>)}</div>
         <p>{(state.decks ?? 1) === 2 ? '108 cards · 4 Jokers' : '54 cards · 2 Jokers'}</p>
+      </fieldset>
+      <fieldset className="queen-settings" disabled={!host || !online || pending} aria-describedby="room-rules-hint">
+        <legend>Reshuffle discards</legend>
+        <div className="queen-options">{([false, true] as const).map(enabled => <label className="queen-option" key={String(enabled)}>
+          <input type="radio" name="reshuffle" value={String(enabled)} checked={(state.reshuffle ?? false) === enabled} onChange={() => send({ type: 'set-reshuffle', enabled })}/>
+          <span>{enabled ? 'On' : 'Off'}</span>
+        </label>)}</div>
+        <p>When the draw pile empties, shuffle the discards into a new draw pile. The top discard stays on the table.</p>
       </fieldset>
       <fieldset className="queen-settings" disabled={!host || !online || pending} aria-describedby="room-rules-hint">
       <legend>Queen power</legend>
@@ -604,10 +617,10 @@ export default function Home() {
                 <div className="deck-stack">
                   <PlayingCard slotKey="draw" face={online && isTurn ? state.drawn : null}
                     onClick={() => { if (isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer) { setMatching(false); send({ type: 'draw' }); } }}
-                    disabled={!isTurn || state.phase !== 'playing' || !!state.drawn || !!state.power || !!state.transfer || !online || pending || !state.deckCount}
-                    label={online && isTurn && state.drawn ? `Your drawn card: ${cardLabel(state.drawn)}` : `Draw pile, ${state.deckCount} cards remaining`}/>
+                    disabled={!isTurn || state.phase !== 'playing' || !!state.drawn || !!state.power || !!state.transfer || !canAct || !drawCount}
+                    label={online && isTurn && state.drawn ? `Your drawn card: ${cardLabel(state.drawn)}` : `Draw pile, ${drawCount} cards remaining`}/>
                 </div>
-                <span className="pile-label">{isTurn && state.drawn ? 'Your draw' : 'Draw pile'} <b>{state.deckCount}</b></span>
+                <span className="pile-label">{isTurn && state.drawn ? 'Your draw' : 'Draw pile'} <b>{drawCount}</b></span>
               </div>
               <div className="pile">
                 <PlayingCard slotKey="discard" face={state.discard} empty={!state.discard} allowEmptyClick={canDiscardDrawn}
@@ -620,13 +633,13 @@ export default function Home() {
           </div>
           <div className="your-area">{perspective && hand(perspective, true, state.players.findIndex(p => p.id === perspective.id))}</div>
         <section className={`action-bar ${matching && canMatch ? 'matching-mode' : ''}`} aria-label="Game actions"><div className="action-instruction" aria-live="polite"><span className="action-indicator">{transferMine ? <Icon name="arrow"/> : matching && canMatch ? '=' : state.phase === 'ending' ? countdown ?? '·' : isTurn && state.phase === 'playing' ? '→' : <Icon name="cards"/>}</span><div><h2>{instruction.title}</h2><p>{instruction.detail}</p></div></div><div className="action-controls">{spectatorsPanel()}
-          {offlinePlayers.length > 0 && <div className="recovery-panel"><p>{offlinePlayers.map(p => p.name).join(', ')} disconnected · {offlinePlayers.length === 1 ? 'seat' : 'seats'} saved</p>{me?.id === state.hostId && recoverPlayer && <button className="button secondary" disabled={!online || pending || recoverWait !== 0} onClick={() => send({ type: 'recover-player', playerId: recoverPlayer.id })}>{recoverWait ? `Wait ${recoverWait}s` : state.phase === 'peek' ? `Continue without ${recoverPlayer.name}` : state.transfer?.from === recoverPlayer.id ? 'Complete card transfer' : `Skip ${recoverPlayer.name}’s turn`}</button>}</div>}
+          {offlinePlayers.length > 0 && <div className="recovery-panel"><p>{offlinePlayers.map(p => p.name).join(', ')} disconnected · {offlinePlayers.length === 1 ? 'seat' : 'seats'} saved</p>{me?.id === state.hostId && recoverPlayer && <button className="button secondary" disabled={!canAct || recoverWait !== 0} onClick={() => send({ type: 'recover-player', playerId: recoverPlayer.id })}>{recoverWait ? `Wait ${recoverWait}s` : state.phase === 'peek' ? `Continue without ${recoverPlayer.name}` : state.transfer?.from === recoverPlayer.id ? 'Complete card transfer' : `Skip ${recoverPlayer.name}’s turn`}</button>}</div>}
           {state.phase === 'peek' && me?.initialCards?.some(s => s === 'waiting') && <button className="button primary" onClick={() => send({ type: 'reveal-initial' })} disabled={pending || !online || dealing}>{me.initial === 'waiting' ? 'Look at bottom two' : 'Look at remaining card'}</button>}
           {state.phase === 'peek' && me?.initial === 'viewing' && <button className="button primary" onClick={() => send({ type: 'close-initial' })} disabled={pending || !online}>Done looking <Icon name="check"/></button>}
-          {isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer && <><button className="button secondary cambio-button" title={state.turns < state.players.length * 2 ? 'Available after two complete rounds' : 'Lock your hand and give everyone one last turn'} disabled={pending || !online || !!state.calledBy || state.turns < state.players.length * 2} onClick={() => send({ type: 'cambio' })}>Call Cambio</button><button className="button primary" disabled={pending || !online} onClick={() => { setMatching(false); send({ type: 'draw' }); }}>Draw card <Icon name="arrow"/></button></>}
+          {isTurn && state.phase === 'playing' && !state.drawn && !state.power && !state.transfer && <><button className="button secondary cambio-button" title={state.turns < state.players.length * 2 ? 'Available after two complete rounds' : 'Lock your hand and give everyone one last turn'} disabled={!canAct || !!state.calledBy || state.turns < state.players.length * 2} onClick={() => send({ type: 'cambio' })}>Call Cambio</button><button className="button primary" disabled={!canAct || !drawCount} onClick={() => { setMatching(false); send({ type: 'draw' }); }}>Draw card <Icon name="arrow"/></button></>}
           {isTurn && state.drawn && <div className="drawn-choice"><button className="button primary" onClick={discardDrawn} disabled={!canDiscardDrawn}>Discard{state.drawn.rank >= 7 && state.drawn.rank <= 13 ? ' & choose power' : ''}<Icon name="arrow" size={16}/></button></div>}
-          {isTurn && state.power && <><button className="button secondary" disabled={pending || !online || !!state.transfer} onClick={() => { setMatching(false); setSelected(null); send({ type: 'skip-power' }); }}>{state.power.step === 'swap' ? 'Skip swap' : 'Skip power'}</button>{state.power.step === 'view' && <button className="button primary" disabled={pending || !online || !!state.transfer} onClick={() => send({ type: 'close-peek' })}>Done looking <Icon name="check"/></button>}</>}
-          {me && (state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!online || pending || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
+          {isTurn && state.power && <><button className="button secondary" disabled={!canAct || !!state.transfer} onClick={() => { setMatching(false); setSelected(null); send({ type: 'skip-power' }); }}>{state.power.step === 'swap' ? 'Skip swap' : 'Skip power'}</button>{state.power.step === 'view' && <button className="button primary" disabled={!canAct || !!state.transfer} onClick={() => send({ type: 'close-peek' })}>Done looking <Icon name="check"/></button>}</>}
+          {me && (state.phase === 'playing' || state.phase === 'ending') && <button className={`button match-button ${matching && canMatch ? 'is-matching' : ''}`} disabled={!canAct || !canMatch} onClick={() => { setMatching(m => !m); setSelected(null); }}> {matching && canMatch ? 'Cancel match' : 'Match a card'}<kbd>M</kbd></button>}
         </div></section>
         </div>
         <footer className="table-footer"><span><Icon name="users" size={13}/>{state.players.length} players<span className="meta-dot">·</span>Lowest score wins<span className="meta-dot">·</span>Q: {queenLabel}</span><span className="vanity-footer">{credits}</span></footer>
@@ -634,6 +647,15 @@ export default function Home() {
 
     {(!state || state.phase === 'lobby' || state.phase === 'finished') && <footer className="vanity-footer screen-credits">{credits}</footer>}
     {presenceNotice && <div className="presence-notice" role="status">{presenceNotice}</div>}
+    <div role="status">
+      {reshuffling && <div className="reshuffle-overlay">
+        <div className="reshuffle-popup">
+          <Icon name="cards" size={28}/>
+          <h2>Reshuffling the draw pile…</h2>
+          <p>Play resumes automatically.</p>
+        </div>
+      </div>}
+    </div>
     <dialog ref={roomDialog} className="rooms-dialog" aria-labelledby="room-dialog-title" onCancel={() => setRoomModal(null)} onClose={() => setRoomModal(null)} onClick={e => { if (e.target === e.currentTarget) setRoomModal(null); }}>
       <div className="dialog-heading"><h2 id="room-dialog-title">{roomModal === 'browse' ? 'Rooms' : roomModal === 'invite' ? `You’re invited to room ${code}` : 'Join with code'}</h2><button className="icon-button" aria-label="Close" onClick={() => setRoomModal(null)}><Icon name="close"/></button></div>
       {roomModal === 'browse' ? <div className="room-list" aria-live="polite">

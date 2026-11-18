@@ -218,6 +218,29 @@ button.playing-card:active:not(:disabled) { transform: translateY(-2px); }
 .recovery-panel p { margin-bottom: 8px; }
 .recovery-panel .button { width: 100%; font-size: 12px; }
 .presence-notice { position: fixed; top: 78px; right: 24px; z-index: 20; max-width: 340px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 3px 16px #10231920; font-size: 12px; }
+.reshuffle-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #101c16a6;
+  pointer-events: none;
+}
+.reshuffle-popup {
+  width: min(100%, 340px);
+  padding: 26px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  box-shadow: 0 16px 48px #08140c4d;
+}
+.reshuffle-popup svg { display: block; margin: 0 auto 12px; color: var(--accent); }
+.reshuffle-popup h2 { font-size: 20px; line-height: 1.3; }
+.reshuffle-popup p { margin-top: 6px; color: var(--muted); font-size: 14px; }
 .table-middle { position: absolute; left: 50%; top: 46.5%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 130px; width: 240px; padding-top: 6px; z-index: 2; }
 .pile-area { display: flex; align-items: start; gap: 27px; }
 .pile { display: flex; flex-direction: column; align-items: center; }

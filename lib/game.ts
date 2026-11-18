@@ -43,6 +43,8 @@ export type Game = {
   motions?: MotionEvent[];
   queenRule?: QueenRule;
   decks?: 1 | 2;
+  reshuffle?: boolean;
+  reshuffleUntil?: number;
 };
 export type Action =
   | { type: 'ready' | 'start' | 'reveal-initial' | 'close-initial' | 'draw' | 'discard' | 'close-peek' | 'skip-power' | 'cambio' | 'end-game' }
@@ -56,6 +58,7 @@ export type Action =
   | { type: 'spectate' }
   | { type: 'queue-seat'; queued: boolean }
   | { type: 'set-decks'; decks: 1 | 2 }
+  | { type: 'set-reshuffle'; enabled: boolean }
   | { type: 'set-queen-rule'; rule: QueenRule };
 
 function samePhysicalCard(a: Card, b: Card) {
@@ -75,11 +78,14 @@ export function shuffledDeck(copies: 1 | 2 = 1): Card[] {
       for (let rank = 1; rank <= 13; rank++) deck.push({ rank, suit, id: crypto.randomUUID() });
     deck.push({ rank: 0, suit: 'joker', id: crypto.randomUUID() }, { rank: 0, suit: 'joker', id: crypto.randomUUID() });
   }
-  for (let i = deck.length - 1; i > 0; i--) {
+  return shuffle(deck);
+}
+function shuffle(cards: Card[]): Card[] {
+  for (let i = cards.length - 1; i > 0; i--) {
     const j = randomIndex(i + 1);
-    [deck[i], deck[j]] = [deck[j], deck[i]];
+    [cards[i], cards[j]] = [cards[j], cards[i]];
   }
-  return deck;
+  return cards;
 }
 function randomIndex(n: number): number {
   const numbers = new Uint32Array(1);
@@ -125,16 +131,29 @@ function begin(game: Game, now = Date.now()): void {
   game.drawn = null; game.power = null; game.turnComplete = false;
   game.opportunity = null; game.transfer = null; game.calledBy = null;
   game.finalTurns = null; game.exhausted = false; game.deadline = null;
+  delete game.reshuffleUntil;
   game.winners = []; game.resultWinners = []; game.resultPlayerIds = []; game.resultPlayers = []; game.flash = null; game.lastSwap = null; game.motions = []; game.gameNumber++;
   game.message = 'Look at your bottom two cards. Hide them when you are ready.';
 }
-function publishDiscard(game: Game, card: Card): void {
+function publishDiscard(game: Game, card: Card, now: number): void {
   game.discards.push(card);
+  refillDrawPile(game, now);
   game.opportunity = { id: crypto.randomUUID(), open: true };
 }
-function takeCard(game: Game): Card | null {
+const RESHUFFLE_PAUSE_MS = 3000;
+function refillDrawPile(game: Game, now: number): void {
+  if (!game.reshuffle || game.deck.length || game.discards.length < 2) return;
+  // Keep the visible discard and its matching opportunity; recycle physical cards intact.
+  game.deck = shuffle(game.discards.splice(0, game.discards.length - 1));
+  game.exhausted = false;
+  game.reshuffleUntil = now + RESHUFFLE_PAUSE_MS;
+  if (game.deadline !== null) game.deadline += RESHUFFLE_PAUSE_MS;
+}
+function takeCard(game: Game, now: number): Card | null {
+  refillDrawPile(game, now);
   const card = game.deck.pop() ?? null;
-  if (!game.deck.length) game.exhausted = true;
+  refillDrawPile(game, now);
+  game.exhausted = !game.deck.length;
   return card;
 }
 function appendCard(player: Player, card: Card): void {
@@ -151,7 +170,7 @@ function recordMotion(game: Game, actorId: string, kind: MotionEvent['kind'], mo
 }
 function ending(game: Game, now: number): void {
   if (game.phase === 'ending') return;
-  game.phase = 'ending'; game.deadline = now + 5000;
+  game.phase = 'ending'; game.deadline = Math.max(now, game.reshuffleUntil ?? 0) + 5000;
   game.drawn = null; game.power = null;
   game.message = 'Final chance to match. Scoring in five seconds.';
 }
@@ -215,6 +234,7 @@ export function syncPresence(game: Game, connectedIds: string[], now = Date.now(
 export function applyAction(game: Game, id: string, action: Action, now = Date.now()): void {
   const player = playerById(game, id);
   ensure(action && typeof action.type === 'string', 'Invalid action.');
+  ensure(now >= (game.reshuffleUntil ?? 0), 'The draw pile is reshuffling.');
   // Deadline admission is checked before all actions, not only by a timer callback.
   if (game.phase === 'ending' && game.deadline !== null && now >= game.deadline) {
     ensure(action.type === 'give' || (action.type === 'recover-player' && game.transfer?.from === action.playerId), 'The matching window has closed.');
@@ -240,10 +260,18 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
         applyAction(game, absent.id, { type: 'give', slot: slots[randomIndex(slots.length)] }, now);
       }
       if (wasActive && game.phase === 'playing' && game.players[game.active].id === absent.id) {
-        if (game.drawn) { publishDiscard(game, game.drawn); recordMotion(game, absent.id, 'discard', [{ from: 'draw', to: 'discard' }], now); }
+        if (game.drawn) { publishDiscard(game, game.drawn, now); recordMotion(game, absent.id, 'discard', [{ from: 'draw', to: 'discard' }], now); }
         finishTurn(game, now);
         if (game.phase === 'playing') game.message = `${player.name} skipped ${absent.name}’s turn. Their seat is saved.`;
       } else if (owesCard && game.phase === 'playing') game.message = `${player.name} completed ${absent.name}’s card transfer.`;
+    }
+  } else if (action.type === 'set-reshuffle') {
+    ensure(id === game.hostId && (game.phase === 'lobby' || game.phase === 'finished'), 'Only the host can change reshuffling between games.');
+    ensure(typeof action.enabled === 'boolean', 'Choose whether reshuffling is enabled.');
+    if ((game.reshuffle ?? false) !== action.enabled) {
+      game.reshuffle = action.enabled;
+      for (const p of game.players) p.ready = false;
+      game.message = `Reshuffling ${action.enabled ? 'on' : 'off'}. Everyone must ready up again.`;
     }
   } else if (action.type === 'set-decks') {
     ensure(id === game.hostId && (game.phase === 'lobby' || game.phase === 'finished'), 'Only the host can change decks between games.');
@@ -291,7 +319,7 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
   } else if (action.type === 'end-game') {
     ensure(id === game.hostId && (game.phase === 'playing' || game.phase === 'peek'), 'Only the host can end a running game.');
     ensure(!game.transfer, 'Finish the pending card transfer first.');
-    if (game.drawn) { publishDiscard(game, game.drawn); game.drawn = null; }
+    if (game.drawn) { publishDiscard(game, game.drawn, now); game.drawn = null; }
     ending(game, now);
   } else if (action.type === 'match') {
     ensure(game.phase === 'playing' || game.phase === 'ending', 'Matching is not open.');
@@ -303,7 +331,7 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
     const top = game.discards.at(-1)!;
     game.flash = { target: action.target, card, until: now + 1200 };
     if (card.rank !== top.rank) {
-      const penalty = takeCard(game);
+      const penalty = takeCard(game, now);
       if (penalty) appendCard(player, penalty);
       recordMotion(game, id, 'penalty', [
         { from: action.target, to: action.target },
@@ -315,6 +343,7 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       game.opportunity.open = false;
       owner.hand[action.target.slot] = null;
       game.discards.push(card); // Covers the discard without opening another opportunity.
+      refillDrawPile(game, now);
       if (owner.id !== id) game.transfer = { from: id, to: action.target };
       recordMotion(game, id, 'match', [{ from: action.target, to: 'discard' }], now);
       game.message = `${player.name} matched ${owner.id === id ? 'their own' : `${owner.name}’s`} card ${action.target.slot + 1}.`;
@@ -337,7 +366,7 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
     ensure(!game.transfer, 'Wait for the matching card transfer to finish.');
     if (action.type === 'draw') {
       ensure(!game.drawn && !game.power && !game.turnComplete, 'Finish your current action.');
-      const card = takeCard(game);
+      const card = takeCard(game, now);
       ensure(card, 'The draw pile is empty.');
       game.drawn = card; game.message = `${player.name} drew a card.`;
       recordMotion(game, id, 'draw', [{ from: 'draw', to: 'draw' }], now);
@@ -345,14 +374,14 @@ export function applyAction(game: Game, id: string, action: Action, now = Date.n
       ensure(game.drawn && !game.power && action.target.playerId === id, 'Choose one of your cards to replace.');
       const { card } = targetCard(game, action.target, true);
       player.hand[action.target.slot] = game.drawn;
-      publishDiscard(game, card);
+      publishDiscard(game, card, now);
       recordMotion(game, id, 'replace', [{ from: action.target, to: 'discard' }, { from: 'draw', to: action.target }], now);
       game.message = `${player.name} replaced card ${action.target.slot + 1}.`;
       finishTurn(game, now);
     } else if (action.type === 'discard') {
       ensure(game.drawn && !game.power, 'Draw a card first.');
       const card = game.drawn;
-      publishDiscard(game, card); game.drawn = null;
+      publishDiscard(game, card, now); game.drawn = null;
       recordMotion(game, id, 'discard', [{ from: 'draw', to: 'discard' }], now);
       if (card.rank >= 7 && card.rank <= 13) {
         const step = card.rank === 11 || (card.rank === 12 && game.queenRule === 'swap-then-look') ? 'swap' : card.rank === 9 || card.rank === 10 ? 'other' : 'own';
@@ -453,6 +482,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     deckCount: game.deck.length, discard: game.discards.at(-1) ?? null,
     opportunity: game.opportunity, calledBy: game.calledBy,
     finalTurns: game.finalTurns, deadline: game.deadline,
+    reshuffleUntil: (game.reshuffleUntil ?? 0) > now ? game.reshuffleUntil : null,
     winners: game.winners, message: game.message,
     results: game.phase === 'finished' ? (game.resultPlayers ?? game.players.filter(p => !game.resultPlayerIds || game.resultPlayerIds.includes(p.id))).map(p => ({
       id: p.id, name: p.name, score: score(p), hand: p.hand.map(card => card ? { face: card } : null),
@@ -470,7 +500,7 @@ export function viewFor(game: Game, id: string, now = Date.now()) {
     transfer: game.transfer, exhausted: game.exhausted, serverTime: now,
     lastSwap: game.lastSwap ?? null,
     motions: game.motions ?? [],
-    queenRule: game.queenRule ?? 'look-then-swap', decks: game.decks ?? 1,
+    queenRule: game.queenRule ?? 'look-then-swap', decks: game.decks ?? 1, reshuffle: game.reshuffle ?? false,
     session: sessionScoreView(game),
   };
 }

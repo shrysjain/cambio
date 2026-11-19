@@ -39,7 +39,7 @@ test('spectator view reveals public positions, never private initial peeks, draw
   g.flash = { target: { playerId: 'b', slot: 0 }, card: g.players[1].hand[0]!, until: Date.now() + 5000 };
   assert.deepEqual(viewFor(g, 's').players[1].hand[0]?.face, g.flash.card);
 });
-test('scores precede promotion, old seats remain, all ready checks reset and new seats get no old score', () => {
+test('scores precede promotion, existing readiness remains and new seats get no old score', () => {
   const g = table();
   assert.deepEqual(promoteQueued(g, ['a', 'b', 's']), []);
   applyAction(g, 'a', { type: 'end-game' }, 1000);
@@ -50,8 +50,9 @@ test('scores precede promotion, old seats remain, all ready checks reset and new
   assert.deepEqual(g.winners, winners); assert.deepEqual(g.session, points);
   const view = viewFor(JSON.parse(JSON.stringify(g)), 's');
   assert.equal(view.yourRole, 'player'); assert.equal(view.players.find(p => p.id === 's')?.score, null);
-  assert.equal(view.spectators.length, 0); assert.ok(g.players.every(p => !p.ready));
-  applyAction(g, 'a', { type: 'ready' }); applyAction(g, 'b', { type: 'ready' });
+  assert.equal(view.spectators.length, 0);
+  assert.deepEqual(g.players.map(p => p.ready), [true, false, false]);
+  applyAction(g, 'b', { type: 'ready' });
   assert.equal(g.phase, 'finished');
   applyAction(g, 's', { type: 'ready' });
   assert.equal(g.phase, 'peek'); assert.equal(g.players[2].hand.length, 4);
@@ -125,4 +126,20 @@ test('legacy results are snapshotted before a player moves to watching', () => {
   switchToSpectating(g, 'a');
   assert.deepEqual(viewFor(JSON.parse(JSON.stringify(g)), 'a').results, scores);
   assert.equal(viewFor(g, 'a').results.length, 2);
+});
+
+test('joining between games preserves existing ready checks and requires the new seat to ready', () => {
+  for (const phase of ['lobby', 'finished'] as const) {
+    const g = newGame('AB12', 'a', 'Alex');
+    addPlayer(g, 'b', 'Blake');
+    g.phase = phase;
+    g.players.forEach(p => p.ready = true);
+    joinRoom(g, 'c', 'Casey');
+    assert.deepEqual(g.players.map(p => p.ready), [true, true, false]);
+    assert.equal(g.phase, phase);
+    if (phase === 'lobby') assert.throws(() => applyAction(g, 'a', { type: 'start' }), /ready/);
+    applyAction(g, 'c', { type: 'ready' });
+    if (phase === 'lobby') applyAction(g, 'a', { type: 'start' });
+    assert.equal(g.phase, 'peek');
+  }
 });

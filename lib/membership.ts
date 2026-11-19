@@ -7,7 +7,6 @@ export function joinRoom(game: Game, id: string, name: string, now = Date.now())
   if (betweenGames(game) && game.players.length < 10 && !(game.spectators ?? []).some(s => s.queuedAt !== null)) {
     if (game.phase === 'finished') game.resultPlayerIds ??= game.players.map(p => p.id);
     addPlayer(game, id, name);
-    for (const p of game.players) p.ready = false;
   } else {
     game.spectators ??= [];
     if (game.spectators.length >= 20) throw new Error('The spectator area is full. Try again later.');
@@ -54,7 +53,6 @@ export function promoteQueued(game: Game, connectedIds: string[]) {
   for (const member of candidates) addPlayer(game, member.id, member.name);
   const ids = candidates.map(s => s.id);
   game.spectators = game.spectators!.filter(s => !ids.includes(s.id));
-  for (const p of game.players) p.ready = false;
   return ids;
 }
 
